@@ -1,4 +1,5 @@
-"""Local CONNECT proxy: HTTPS to public YouTube addresses only."""
+"""Local CONNECT proxy: public YouTube addresses and exact supported AI API hosts."""
+import argparse
 import asyncio
 import ipaddress
 import re
@@ -6,7 +7,7 @@ import socket
 
 
 def allowed(host):
-    return bool(re.fullmatch(r"(?:[a-z0-9-]+\.)*(?:youtube\.com|googlevideo\.com|ytimg\.com|youtubei\.googleapis\.com|jnn-pa\.googleapis\.com)", host))
+    return host in {'api.openai.com', 'ai-gateway.kilo.ai', 'openrouter.ai'} or bool(re.fullmatch(r"(?:[a-z0-9-]+\.)*(?:youtube\.com|googlevideo\.com|ytimg\.com|youtubei\.googleapis\.com|jnn-pa\.googleapis\.com)", host))
 
 
 async def handle(reader, writer):
@@ -49,11 +50,13 @@ async def handle(reader, writer):
         await writer.wait_closed()
 
 
-async def main():
-    server = await asyncio.start_server(handle, "127.0.0.1", 18769, limit=8192)
+async def main(port):
+    server = await asyncio.start_server(handle, "127.0.0.1", port, limit=8192)
     async with server:
         await server.serve_forever()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--port', type=int, default=18769)
+    asyncio.run(main(parser.parse_args().port))

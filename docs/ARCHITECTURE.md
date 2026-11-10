@@ -8,6 +8,7 @@
 | `extension/youtube.js` | Native-player overlay, synchronization, seeking, audio ducking |
 | `extension/youtube-offscreen.mjs` | YouTube gateway requests and session cancellation |
 | `extension/connection.mjs` | Exact server-origin allowlist; credentials are never sent to arbitrary URLs |
+| `extension/translation.mjs` | Cloud provider defaults and browser-side translation settings validation |
 | `extension/offscreen.js` | Tab audio capture, PCM windows, MediaRecorder, gateway transport |
 | `extension/pcm-worklet.js` | Mono PCM resampling to 16 kHz |
 | `extension/store-worker.js` | OPFS recording and cue storage |
@@ -16,7 +17,7 @@
 | `extension/view.mjs` | Picture controls |
 | `extension/updates.mjs` | Defer extension reload while playback is active |
 
-The extension uses Manifest V3, activeTab, tabCapture, offscreen, storage, scripting, and alarms. It contains no model weights or private server-to-server credentials. Its manifest public key stabilizes the extension ID; that public key is not a signing secret.
+The extension uses Manifest V3, activeTab, tabCapture, offscreen, storage, scripting, and alarms. It contains no model weights or bundled private keys. Optional user-entered cloud API keys stay in local extension storage and are sent to the trusted gateway for one session. Its manifest public key stabilizes the extension ID; that public key is not a signing secret.
 
 ## Server components
 
@@ -25,6 +26,8 @@ The extension uses Manifest V3, activeTab, tabCapture, offscreen, storage, scrip
 `server/synchro/youtube.py` accepts validated YouTube URLs, resolves audio with yt-dlp, checks CDN access, and decodes audio with FFmpeg. Source URLs and video contents are not logged by its helper. No browser cookies are imported. A working server-side route to YouTube is required independently of the browser's ability to play video.
 
 `server/synchro/pipeline.py` recognizes speech, translates text, synthesizes speech, joins WAV parts, normalizes loudness, and adjusts tempo. The translation API supports llama.cpp's OpenAI-compatible endpoint or Ollama's native endpoint; it requires structured JSON output.
+
+`server/synchro/cloud.py` adds fixed-endpoint OpenAI, Kilo Gateway, and OpenRouter calls. Credentials and model selections belong to a session, not global pipeline state. HY-MT2 uses plain-text translation and optional local speech preparation; general instruction models use validated structured output. See [cloud behavior](CLOUD.md).
 
 `deploy/gigaam_server.py` and `deploy/silero_server.py` are separate authenticated loopback services. Both serialize inference instead of creating a CPU thread pool for every viewer. The reference configuration uses eight intra-op CPU threads.
 
@@ -40,7 +43,7 @@ Speech is synthesized as mono WAV. Concatenated RIFF files from sentence-based s
 
 ## Privacy and storage
 
-For YouTube, the browser sends the video URL, selected position, voice, session requests, and access key to the gateway. The gateway sends audio, transcript text, and translated text only to the operator-configured inference services. Video stays with YouTube. For tab capture, tab audio is sent to the gateway and captured video stays in browser storage.
+For YouTube, the browser sends the video URL, selected position, voice, session requests, and access key to the gateway. In Local mode the gateway sends audio/text only to operator-configured inference services. Cloud mode additionally sends recognized text and applicable translation context to the selected provider using the submitted key. Video stays with YouTube. For tab capture, tab audio is sent to the gateway and captured video stays in browser storage.
 
 The backend retains session context in memory until deletion, expiry, or restart. Generated audio is sent as base64 inside JSON responses. Operators control their own service logs, proxies, and model runtimes; this repository cannot guarantee their retention settings.
 

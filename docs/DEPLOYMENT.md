@@ -123,6 +123,8 @@ Whisper still needs an external Speaches service at `SPEECH_URL`. FFmpeg and Nod
 | `SYNCHRO_ASR_URL`, `SYNCHRO_ASR_TOKEN` | Optional GigaAM endpoint and its private key; empty URL uses Whisper |
 | `SYNCHRO_SILERO_URL`, `SYNCHRO_SILERO_TOKEN` | Silero endpoint and private key; empty URL selects legacy Piper |
 | `YTDLP_PROXY` | Optional proxy for server-side YouTube access |
+| `SYNCHRO_CLOUD_PROXY` | Optional HTTPS CONNECT proxy route for cloud API calls only |
+| `SYNCHRO_KILO_TUNNEL_PORT`, `SYNCHRO_OPENROUTER_TUNNEL_PORT`, `SYNCHRO_OPENAI_TUNNEL_PORT` | Optional existing loopback TCP forwards to provider HTTPS; 0 means unset; TLS Host/SNI are preserved |
 
 The app's bare defaults retain the older Ollama endpoint (11435) and model name; `init_config.py` generates the recommended llama.cpp configuration explicitly.
 
@@ -150,7 +152,7 @@ If server egress can access YouTube, no extra proxy is needed. Otherwise, the op
 powershell -File tools/connect.ps1 -Server user@inference-host -IdentityFile C:/path/to/private-key
 ```
 
-Set `YTDLP_PROXY=http://127.0.0.1:18770` in the gateway environment and restart it. The helper requires Python, OpenSSH, and the operator's working network route to YouTube. It forwards the local proxy on 18769 and the gateway on 8768 when that port is free. If the operator's computer or tunnel stops, new audio fetches fail. Recipients need only the extension and HTTPS access.
+Set `YTDLP_PROXY=http://127.0.0.1:18770` in the gateway environment and restart it. To route cloud API calls through the same tunnel, also set `SYNCHRO_CLOUD_PROXY=http://127.0.0.1:18770`. The helper requires Python, OpenSSH, and the operator's working network route to the permitted services. It forwards the local proxy on 18769 and the gateway on 8768 when that port is free. `-ProxyPort` and `-RemoteProxyPort` can select another local/remote port pair. If the operator's computer or tunnel stops, new audio fetches and proxied cloud requests fail. Recipients need only the extension and HTTPS access.
 
 ## Issue and revoke guest keys
 

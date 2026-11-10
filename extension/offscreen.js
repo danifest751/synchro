@@ -1,5 +1,6 @@
 import {youtubeControl} from './youtube-offscreen.mjs';
 import {serverBase} from './connection.mjs';
+import {translationSettings} from './translation.mjs';
 const channel = new BroadcastChannel('synchro-player');
 let stream, context, recorder, worker, sessionId, config;
 let mediaIndex = [], cues = [], pcm = new Int16Array(), offset = 0;
@@ -153,7 +154,9 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
   }
   if (message.type === 'prepare') {
     config = message.config;
-    api('/api/session?voice=' + encodeURIComponent(config.voice || 'female'), {method: 'POST'}).then(result => { sessionId = result.session_id; respond({ok: true}); }).catch(error => respond({ok: false, error: error.message}));
+    Promise.resolve().then(() => api('/api/session', {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({voice: config.voice || 'female', translation: translationSettings(config.translation)})}))
+      .then(result => { sessionId = result.session_id; respond({ok: true}); }).catch(error => respond({ok: false, error: error.message}));
   }
   else if (message.type === 'start') begin(message.streamId, message.config).then(() => respond({ok: true})).catch(error => respond({ok: false, error: error.message}));
   else if (message.type === 'source-changed') fail(new Error('Source video changed. Start a new translation')).then(() => respond({ok: true}));

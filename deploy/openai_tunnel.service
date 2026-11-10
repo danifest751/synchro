@@ -1,0 +1,11 @@
+[Unit]
+Description=Synchro private OpenAI HTTPS forward
+After=network-online.target
+
+[Service]
+ExecStart=/usr/bin/ssh -NT -i %h/.ssh/synchro_cloud_ed25519 -o BatchMode=yes -o ExitOnForwardFailure=yes -o StrictHostKeyChecking=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -L 127.0.0.1:8445:api.openai.com:443 synchro-cloud@gateway.example.com
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import AsyncMock, patch
 
 import httpx
 
@@ -72,3 +73,34 @@ class AccessTests(unittest.IsolatedAsyncioTestCase):
         headers['Origin'] = 'https://example.com'
         response = await self.client.get('/api/check', headers=headers)
         self.assertEqual(response.status_code, 403)
+
+    async def test_cloud_configuration_is_per_session_and_cleared_on_delete(self):
+        first = {'provider': 'kilo', 'api_key': 'alice-private-cloud-key-123'}
+        second = {'provider': 'openrouter', 'api_key': 'bob-private-cloud-key-123'}
+        with patch.object(api.pipeline, 'warmup', new=AsyncMock()) as warmup:
+            alice = await self.client.post('/api/session', headers=self.headers('alice'), json={'voice': 'female', 'translation': first})
+            bob = await self.client.post('/api/session', headers=self.headers('bob'), json={'voice': 'male', 'translation': second})
+        self.assertEqual(alice.status_code, 200, alice.text)
+        self.assertEqual(bob.status_code, 200, bob.text)
+        current = api.sessions[alice.json()['session_id']]
+        self.assertEqual(current.translation.provider, 'kilo')
+        self.assertEqual(api.sessions[bob.json()['session_id']].translation.provider, 'openrouter')
+        self.assertEqual(warmup.await_args_list[0].args[1].api_key.get_secret_value(), first['api_key'])
+        self.assertNotIn(first['api_key'], alice.text)
+        await self.client.delete('/api/session/' + current.id, headers=self.headers('alice'))
+        self.assertEqual(current.translation.api_key.get_secret_value(), '')
+
+    async def test_invalid_cloud_config_never_echoes_the_key(self):
+        secret = 'private-api-key-must-not-appear'
+        response = await self.client.post('/api/translation/check', headers=self.headers('alice'),
+            json={'provider': 'unknown', 'api_key': secret})
+        self.assertEqual(response.status_code, 422)
+        self.assertNotIn(secret, response.text)
+
+    async def test_legacy_capture_request_still_uses_local_translation(self):
+        with patch.object(api.pipeline, 'warmup', new=AsyncMock()):
+            response = await self.client.post('/api/session?voice=male', headers=self.headers('alice'))
+        self.assertEqual(response.status_code, 200)
+        current = api.sessions[response.json()['session_id']]
+        self.assertEqual(current.voice, 'male')
+        self.assertEqual(current.translation.provider, 'local')

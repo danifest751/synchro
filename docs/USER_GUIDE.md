@@ -13,6 +13,8 @@ You need either a running Synchro server or a personal connection from its opera
 
 Keep the extension directory in place. A personal connection contains an access key: do not publish it or share it with another person. Server operators should issue one key per viewer.
 
+For optional cloud text translation, choose OpenAI, Kilo Gateway, or OpenRouter in **Text translation**, enter your provider key and model, and use **Test translator**. Save settings before starting playback. ASR and voices remain local; see [cloud translation](CLOUD.md) for data flow and HY-MT2 requirements.
+
 ## Watch YouTube
 
 1. Open a public English recorded video and wait for advertisements to finish.

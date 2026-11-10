@@ -9,8 +9,9 @@ This prototype has not received an independent security audit. Deploy model serv
 - The extension's manifest key is a public identity key. It is intentionally committed and is not a private signing key.
 - Keep exact extension-Origin checks and the explicit server URL allowlist. A connection file must not be able to redirect a token to any arbitrary server.
 - Treat fetched URLs, transcripts, model output, audio, and accent-service output as untrusted data.
+- Cloud keys entered by viewers are stored in their browser profile and held in gateway session memory. The gateway is trusted with those keys. Use HTTPS remotely; never log request bodies or provider Authorization headers. Provider error bodies and validation inputs are not echoed to clients.
 - Restrict any SSH gateway account to required forwarding ports and disallow interactive use.
-- The optional CONNECT proxy accepts only HTTPS to validated public YouTube addresses; never turn it into an unauthenticated public proxy.
+- The optional CONNECT proxy accepts only HTTPS to validated public YouTube addresses and the three exact supported AI API hosts; never turn it into an unauthenticated public proxy.
 
 The guest registry contains hashes, while connection files contain usable bearer keys. Revocation takes effect at the next authenticated request and cannot retract already delivered audio. Origin checks complement authentication; they do not replace secret keys. Anyone who has a valid key can make non-browser API requests.
 

@@ -13,10 +13,13 @@ import uuid
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from .pipeline import Pipeline, Session, WINDOW
 from .youtube import YoutubeAudio, youtube_url
+from .cloud import TranslationSettings
 
 TOKEN = os.environ.get('SYNCHRO_TOKEN', '')
 ORIGIN = os.environ.get('SYNCHRO_ORIGIN', '')
@@ -29,7 +32,10 @@ pipeline = Pipeline(os.environ.get('SPEECH_URL', 'http://127.0.0.1:8002'),
                     os.environ.get('OLLAMA_URL', 'http://127.0.0.1:11435'),
                     model=os.environ.get('SYNCHRO_MODEL', 'gemma4:12b'), api=os.environ.get('SYNCHRO_LLM_API', 'ollama'),
                     asr_url=os.environ.get('SYNCHRO_ASR_URL', ''), asr_token=os.environ.get('SYNCHRO_ASR_TOKEN', ''),
-                    silero_url=os.environ.get('SYNCHRO_SILERO_URL', ''), silero_token=os.environ.get('SYNCHRO_SILERO_TOKEN', ''))
+                    silero_url=os.environ.get('SYNCHRO_SILERO_URL', ''), silero_token=os.environ.get('SYNCHRO_SILERO_TOKEN', ''),
+                    cloud_proxy=os.environ.get('SYNCHRO_CLOUD_PROXY', ''),
+                    cloud_tunnels={name: int(os.environ.get(f'SYNCHRO_{name.upper()}_TUNNEL_PORT', '0'))
+                                   for name in ['openai', 'kilo', 'openrouter']})
 sessions = {}
 registry_lock = asyncio.Lock()
 warmup_lock = asyncio.Lock()
@@ -43,6 +49,7 @@ async def discard(current):
             await current.audio.close()
             current.audio = None
         sessions.pop(current.id, None)
+        current.translation = TranslationSettings()
 
 
 async def reap():
@@ -68,11 +75,19 @@ async def lifespan(app):
     for current in list(sessions.values()):
         await discard(current)
     await pipeline.client.aclose()
+    if pipeline.cloud_client:
+        await pipeline.cloud_client.aclose()
 
 
 app = FastAPI(title='Synchro', lifespan=lifespan, docs_url=None, redoc_url=None)
 app.add_middleware(CORSMiddleware, allow_origins=[ORIGIN], allow_methods=['GET', 'POST', 'DELETE'],
                    allow_headers=['Authorization', 'Content-Type', 'X-Offset', 'X-Final'])
+
+
+@app.exception_handler(RequestValidationError)
+async def invalid_request(request, error):
+    # Validation errors can otherwise echo a submitted API key in the response.
+    return JSONResponse(status_code=422, content={'detail': 'Invalid request. Check the provider, model, API key, voice, and input fields.'})
 
 
 async def authenticate(request: Request):
@@ -113,7 +128,7 @@ def owned(session_id, owner):
     return current
 
 
-async def reserve(owner, voice):
+async def reserve(owner, voice, translation=None):
     async with registry_lock:
         await reap()
         for current in list(sessions.values()):
@@ -124,14 +139,15 @@ async def reserve(owner, voice):
                     raise HTTPException(409, 'This key already has an active session. Close translation first')
         if len(sessions) >= MAX_SESSIONS:
             raise HTTPException(503, f'All {MAX_SESSIONS} slots are occupied. Try again when a viewer finishes')
-        current = Session(id=uuid.uuid4().hex, touched=time.monotonic(), voice=voice, owner=owner)
+        current = Session(id=uuid.uuid4().hex, touched=time.monotonic(), voice=voice, owner=owner,
+                          translation=translation or TranslationSettings())
         sessions[current.id] = current
         return current
 
 
 @app.get('/health')
 async def health():
-    return {'service': 'synchro', 'version': '0.3.1', 'max_sessions': MAX_SESSIONS}
+    return {'service': 'synchro', 'version': '0.4.0', 'max_sessions': MAX_SESSIONS}
 
 
 @app.get('/api/check')
@@ -139,16 +155,22 @@ async def check(owner=Depends(authenticate)):
     return {'ok': True, 'client': owner, 'max_sessions': MAX_SESSIONS}
 
 
+class SessionRequest(BaseModel):
+    voice: Literal['female', 'male', 'male-eugene'] = 'female'
+    translation: TranslationSettings = Field(default_factory=TranslationSettings)
+
+
 @app.post('/api/session')
-async def start(voice: Literal['female', 'male', 'male-eugene'] = 'female', owner=Depends(authenticate)):
-    current = await reserve(owner, voice)
+async def start(body: SessionRequest | None = None, voice: Literal['female', 'male', 'male-eugene'] = 'female', owner=Depends(authenticate)):
+    selected = body or SessionRequest(voice=voice)
+    current = await reserve(owner, selected.voice, selected.translation)
     try:
         async with current.lock, asyncio.timeout(105), warmup_lock:
-            await pipeline.warmup(voice)
+            await pipeline.warmup(current.voice, current.translation)
             current.touched = time.monotonic()
-    except Exception:
+    except Exception as error:
         await discard(current)
-        raise HTTPException(503, 'Could not warm up local models. Check the server services')
+        raise HTTPException(503, str(error) if isinstance(error, ValueError) else 'Could not warm up models. Check the server services')
     return {'session_id': current.id, 'window_samples': WINDOW, 'step_samples': 7 * 16000}
 
 
@@ -190,10 +212,9 @@ async def stop(session_id: str, owner=Depends(authenticate)):
     return Response(status_code=204)
 
 
-class VideoRequest(BaseModel):
+class VideoRequest(SessionRequest):
     url: str = Field(max_length=2048)
     position: float = Field(default=0, ge=0, allow_inf_nan=False)
-    voice: Literal['female', 'male', 'male-eugene'] = 'female'
 
 
 @app.post('/api/video')
@@ -202,20 +223,31 @@ async def start_video(body: VideoRequest, owner=Depends(authenticate)):
         url = youtube_url(body.url)
     except ValueError as error:
         raise HTTPException(422, str(error))
-    current = await reserve(owner, body.voice)
+    current = await reserve(owner, body.voice, body.translation)
     try:
         async with current.lock, asyncio.timeout(105):
             current.audio = await YoutubeAudio.open(url, body.position)
             async with warmup_lock:
-                await pipeline.warmup(body.voice)
+                await pipeline.warmup(body.voice, current.translation)
             current.offset = round(current.audio.base * 16000)
             current.touched = time.monotonic()
     except Exception as error:
         await discard(current)
-        raise HTTPException(502, str(error) if isinstance(error, ValueError) else 'Could not prepare audio or local models')
+        raise HTTPException(502, str(error) if isinstance(error, ValueError) else 'Could not prepare audio or models')
     return {'session_id': current.id, 'base': current.audio.base, 'duration': current.audio.duration}
 
 
+@app.post('/api/translation/check')
+async def check_translation(body: TranslationSettings, owner=Depends(authenticate)):
+    started = time.monotonic()
+    try:
+        text = await pipeline.translate('She decided to sleep on it and give me an answer in the morning.', [], 6, translation=body)
+    except ValueError as error:
+        raise HTTPException(502, str(error))
+    except Exception:
+        raise HTTPException(502, 'Translation check failed; check the model service')
+    return {'ok': True, 'provider': body.provider, 'model': body.model, 'translation': text,
+            'seconds': round(time.monotonic() - started, 3)}
 @app.get('/api/video/{session_id}')
 async def video_status(session_id: str, owner=Depends(authenticate)):
     current = owned(session_id, owner)

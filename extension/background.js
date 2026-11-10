@@ -40,7 +40,7 @@ async function start(tabId) {
   if ((await chrome.storage.session.get('captureActive')).captureActive) throw new Error('Finish the current translation first');
   const players = await chrome.tabs.query({url: chrome.runtime.getURL('player.html')});
   if (players.length) throw new Error('Close the previous Synchro player before starting another translation');
-  const config = await chrome.storage.local.get(['token', 'delay', 'voice', 'apiBase']);
+  const config = await chrome.storage.local.get(['token', 'delay', 'voice', 'apiBase', 'translation']);
   config.apiBase = serverBase(config.apiBase);
   if (!config.token) throw new Error('Import a connection in the extension settings');
   const tab = await chrome.tabs.get(tabId);
@@ -93,7 +93,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     void chrome.storage.session.get(['sourceTab', 'sourceMode']).then(async state => {
       if (state.sourceMode !== 'youtube' || sender.tab?.id !== state.sourceTab || sender.frameId !== 0) return respond({ok: false});
       if (!Number.isFinite(message.position) && message.type !== 'youtube-stop') return respond({ok: false});
-      const config = await chrome.storage.local.get(['token', 'delay', 'voice', 'apiBase']);
+      const config = await chrome.storage.local.get(['token', 'delay', 'voice', 'apiBase', 'translation']);
       config.apiBase = serverBase(config.apiBase);
       const tab = await chrome.tabs.get(state.sourceTab);
       const result = await chrome.runtime.sendMessage({target: 'offscreen', type: message.type === 'youtube-seek' ? 'youtube-start' : message.type,

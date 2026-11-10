@@ -1,4 +1,5 @@
 import {serverBase} from './connection.mjs';
+import {translationSettings} from './translation.mjs';
 let current, lifecycle = Promise.resolve();
 
 async function request(state, path, method = 'GET', body, cancel = true) {
@@ -22,7 +23,7 @@ async function run(state) {
   try {
     emit(state, {type: 'loading'});
     // The initial request must return its ID even after cancellation so the session can be deleted.
-    const opened = await request(state, '/api/video', 'POST', {url: state.url, position: state.position, voice: state.config.voice || 'female'}, false);
+    const opened = await request(state, '/api/video', 'POST', {url: state.url, position: state.position, voice: state.config.voice || 'female', translation: translationSettings(state.config.translation)}, false);
     state.id = opened.session_id;
     if (state.stopped) return;
     emit(state, {type: 'opened', ...opened});

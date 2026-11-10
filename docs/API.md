@@ -14,6 +14,7 @@ The owner key is configured directly. Guest keys are matched against SHA-256 has
 | --- | --- |
 | `GET /health` | Unauthenticated service name, version, `max_sessions` |
 | `GET /api/check` | Validate credentials; returns `ok`, client name, `max_sessions` |
+| `POST /api/translation/check` | Test selected local/cloud text translator; returns translation and elapsed seconds |
 | `POST /api/video` | Create a native-YouTube session and warm up models |
 | `GET /api/video/{id}` | Read `ready_until` and `finished`; also refreshes activity |
 | `POST /api/video/{id}/next` | Decode and translate the next audio window |
@@ -31,6 +32,8 @@ The owner key is configured directly. Guest keys are matched against SHA-256 has
 }
 ```
 
+Session creation optionally accepts a `translation` object: `{"provider":"kilo","model":"tencent/hy-mt2-1.8b","api_key":"YOUR_PRIVATE_PROVIDER_KEY"}`. Supported providers are `local` (default), `openai`, `kilo`, and `openrouter`. Model IDs are limited to 128 characters and fixed provider URLs are used. The key is never included in a session response. Send the same object directly as the body of `POST /api/translation/check`. Model-validation failures return a sanitized message rather than echoing a submitted key.
+
 `url` is a validated HTTPS YouTube video URL, at most 2048 characters. `position` is a finite nonnegative number in seconds and must precede the end of the video. `voice` is `female` (Xenia), `male` (Aidar), or `male-eugene` (Eugene). Only recorded public videos are supported.
 
 The response contains `session_id`, `base` (actual starting position), and `duration` in seconds. Fetch windows sequentially with `/next`; do not issue concurrent requests for the same session. Close the session on cancellation and start a new one after seeking or changing voices.
@@ -42,6 +45,8 @@ The response contains `session_id`, `base` (actual starting position), and `dura
 ```json
 {"session_id":"example-id","window_samples":128000,"step_samples":112000}
 ```
+
+New clients can instead send JSON `{"voice":"female","translation":{"provider":"local"}}` to `/api/session`. The legacy query/empty-body request remains compatible. Both capture and native-YouTube sessions freeze their own translation settings when created.
 
 Upload raw **mono PCM16 little-endian at 16 kHz**, without a WAV header. Each non-final window contains 128000 samples (256000 bytes). Advance by 112000 samples, so windows overlap by one second. A final window can be shorter and must contain a positive whole number of samples.
 

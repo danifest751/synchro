@@ -7,12 +7,13 @@ Watch English videos with synchronized Russian voiceover, powered by models on y
 
 Synchro is a Manifest V3 browser extension and a Python backend. On YouTube, video stays in the native player while the server fetches and translates the audio track. A small playback buffer gives local speech recognition, translation, and speech synthesis time to work.
 
-**Status: prototype 0.3.1.** English → Russian is the implemented language pair. The interface and documentation are in English. This repository does not provide a hosted service, access keys, or model weights.
+**Status: prototype 0.4.0.** English → Russian is the implemented language pair. The interface and documentation are in English. This repository does not provide a hosted service, access keys, or model weights.
 
 ## Features
 
 - Native YouTube playback with pause, seeking, fullscreen, and an overlay for translation controls.
 - Local ASR, text translation, and speech synthesis; no paid cloud API is required.
+- Optional cloud text translation through OpenAI, Kilo Gateway, or OpenRouter, selected per viewer in settings.
 - Three Silero voices: Xenia, Aidar, and Eugene.
 - Separate controls for original audio and voiceover, smooth audio ducking, optional captions, zoom, fit, and fill.
 - Video waits when translation is not ready and slows down for longer translated phrases.
@@ -55,6 +56,7 @@ The public source defaults to loopback. `synchro.example.com` is a placeholder f
 | --- | --- |
 | [User guide](docs/USER_GUIDE.md) | Installation, playback, voices, controls, updates |
 | [Deployment](docs/DEPLOYMENT.md) | Models, services, configuration, HTTPS, guest keys |
+| [Cloud translation](docs/CLOUD.md) | Provider selection, API keys, model IDs, testing, HY-MT2 behavior |
 | [Architecture](docs/ARCHITECTURE.md) | Browser/server flow, timing, storage, component map |
 | [API](docs/API.md) | Authentication, endpoints, PCM format, response schema |
 | [Troubleshooting](docs/TROUBLESHOOTING.md) | Connection failures, 502, buffering, speech, YouTube |

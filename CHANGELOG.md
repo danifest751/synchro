@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0 — 2026-11-10
+
+- Added per-session Local, OpenAI, Kilo Gateway, and OpenRouter text translation choices in settings.
+- Added separate provider/model/key profiles, key removal, and a real translator test button.
+- Kept provider API keys out of archives and responses, isolated them per session, and sanitized validation/provider errors.
+- Added HY-MT2 plain-text translation with local preparation of Latin names and digits for Silero.
+- Preserved legacy local capture API requests and local ASR/TTS behavior.
+
 ## 0.3.1 — 2026-11-10
 
 - Published the self-hosted prototype as Synchro — Local Video Dubbing, with English UI/documentation and MIT source licensing.

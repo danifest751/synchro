@@ -11,6 +11,8 @@
 
 Synchro translates **recognized text**. It does not translate video frames or perform end-to-end speech-to-speech inference. The public repository contains integration code, not weights. Download and review models separately.
 
+Version 0.4.0 also supports [optional cloud text translation](CLOUD.md). Its HY-MT2 route uses the provider's plain-text API and keeps the local model available for speech preparation when needed.
+
 ## What is implemented
 
 The gateway's translator requests a JSON object containing `translation`, passes the last two source/translation pairs as context, and asks for speech-friendly Russian. With Silero enabled it rejects remaining Latin letters and digits after one rewrite attempt. The model must support these requirements; a raw translation benchmark is not proof of drop-in compatibility.
@@ -33,7 +35,7 @@ Additional standalone text-translator experiments on **CMP 50HX**:
 | TranslateGemma 4B Q4_K_M, llama.cpp | 0.21–0.57 s | 3.61 phrases/s, 4 slots, 6 clients | 3.4 GiB, 4 slots |
 | OPUS-MT TC Big EN→ZLE FP16, CTranslate2 | 0.02–0.06 s | 108 phrases/s, explicit batch of 8 | 0.7 GiB, single model after warmup |
 
-The LLM tests used continuous concurrent requests; OPUS used fixed batches. Those throughput columns are different workloads, not an apples-to-apples ranking. VRAM is the observed increment after warmup, not peak allocation. HY-MT2 and TranslateGemma generated roughly 166 and 99 tokens/s respectively; their tokenizers differ. OPUS was very fast but mistranslated idioms literally. TranslateGemma handled some idioms well and also made factual/grammatical mistakes. No alternative in this table has been wired into the shipped gateway.
+The LLM tests used continuous concurrent requests; OPUS used fixed batches. Those throughput columns are different workloads, not an apples-to-apples ranking. VRAM is the observed increment after warmup, not peak allocation. HY-MT2 and TranslateGemma generated roughly 166 and 99 tokens/s respectively; their tokenizers differ. OPUS was very fast but mistranslated idioms literally. TranslateGemma handled some idioms well and also made factual/grammatical mistakes. These standalone measurements predate the optional HY-MT2 cloud route in 0.4.0; they do not measure its network or speech-preparation overhead.
 
 Run `tools/smoke.py`, `tools/smoke_youtube.py`, and `tools/bench_viewers.py` against your own installation to measure the complete chain. Warmup/download time and processing time should be reported separately. Long viewing sessions, queue fairness, and recovery need further validation.
 
