@@ -4,6 +4,7 @@ import {canStart, playableUntil, scheduleCue, cueRate, cueAt} from '../extension
 import {updateAction} from '../extension/updates.mjs';
 import {serverBase, PUBLIC_API, LOCAL_API} from '../extension/connection.mjs';
 import {translationSettings} from '../extension/translation.mjs';
+import {estimateMinute, rankedModels} from '../extension/model-picker.mjs';
 
 test('video cannot outrun a missing translation', () => {
   assert.equal(playableUntil(40, 7), 7);
@@ -48,4 +49,19 @@ test('local mode discards cloud keys and cloud settings validate provider and cr
   for (const value of [{provider: 'unknown'}, {provider: 'openai', api_key: 'short'}, {provider: 'kilo', model: 'bad model', api_key: 'private-cloud-api-key-123'}]) {
     assert.throws(() => translationSettings(value));
   }
+});
+
+test('minute estimates use per-token prices and distinguish unknown from free', () => {
+  const model = {id:'tencent/hy-mt2-1.8b', input_price:.000000044, output_price:.000000177};
+  assert.ok(Math.abs(estimateMinute(model).minute - .00010605) < 1e-10);
+  assert.equal(estimateMinute({...model,input_price:null}),null);
+  assert.equal(estimateMinute({...model,input_price:0,output_price:0}).minute,0);
+  assert.equal(estimateMinute({...model,id:'google/gemma-4-26b-a4b-it'}).inputTokens,3500);
+});
+
+test('specialized translation models come first and search preserves the source list', () => {
+  const models=['other/chat','tencent/hy-mt2-1.8b','google/gemma-4-26b-a4b-it','tencent/hy-mt2-30b-a3b','tencent/hy-mt2-7b'].map(id=>({id,name:id}));
+  assert.deepEqual(rankedModels(models).slice(0,3).map(model=>model.id),['tencent/hy-mt2-30b-a3b','tencent/hy-mt2-7b','tencent/hy-mt2-1.8b']);
+  assert.equal(rankedModels(models,'GEMMA').length,1);
+  assert.equal(models[0].id,'other/chat');
 });

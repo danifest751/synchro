@@ -37,15 +37,28 @@ class TranslationSettings(BaseModel):
         return self.provider in ('kilo', 'openrouter') and self.model.startswith('tencent/hy-mt2-')
 
 
-async def complete(client, settings, messages, schema=None, tunnel_port=0):
-    name, endpoint, _ = PROVIDERS[settings.provider]
-    headers = {'Authorization': 'Bearer ' + settings.api_key.get_secret_value()}
+def api_route(endpoint, tunnel_port=0):
+    headers = {}
     extensions = {}
     if tunnel_port:
         target = urlsplit(endpoint)
         endpoint = f'https://127.0.0.1:{tunnel_port}{target.path}'
         headers['Host'] = target.hostname
         extensions['sni_hostname'] = target.hostname
+    return endpoint, headers, extensions
+
+
+def provider_error(provider, status):
+    name = PROVIDERS[provider][0]
+    hint = {401: 'check the API key', 402: 'check account credits', 403: 'check account access and the server outbound network route',
+            429: 'request limit reached', 400: 'check the model and structured-output support'}.get(status, 'try again later')
+    return ValueError(f'{name}: HTTP {status}; {hint}')
+
+
+async def complete(client, settings, messages, schema=None, tunnel_port=0):
+    name, endpoint, _ = PROVIDERS[settings.provider]
+    endpoint, headers, extensions = api_route(endpoint, tunnel_port)
+    headers['Authorization'] = 'Bearer ' + settings.api_key.get_secret_value()
     body = {'model': settings.model, 'messages': messages, 'stream': False, 'temperature': 0}
     body['max_completion_tokens' if settings.provider == 'openai' else 'max_tokens'] = 256
     if settings.provider == 'openai':
@@ -57,9 +70,7 @@ async def complete(client, settings, messages, schema=None, tunnel_port=0):
     except httpx.HTTPError:
         raise ValueError(f'{name} is unreachable or timed out') from None
     if response.status_code != 200:
-        hint = {401: 'check the API key', 402: 'check account credits', 403: 'check account access and the server outbound network route', 429: 'request limit reached',
-                400: 'check the model and structured-output support'}.get(response.status_code, 'try again later')
-        raise ValueError(f'{name}: HTTP {response.status_code}; {hint}')
+        raise provider_error(settings.provider, response.status_code)
     try:
         data = response.json()
         choice = data['choices'][0]

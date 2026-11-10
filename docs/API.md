@@ -15,6 +15,8 @@ The owner key is configured directly. Guest keys are matched against SHA-256 has
 | `GET /health` | Unauthenticated service name, version, `max_sessions` |
 | `GET /api/check` | Validate credentials; returns `ok`, client name, `max_sessions` |
 | `POST /api/translation/check` | Test selected local/cloud text translator; returns translation and elapsed seconds |
+| `POST /api/translation/models` | Fetch filtered Kilo/OpenRouter models and per-token prices; body `{"provider":"kilo"}`; no provider key needed |
+| `POST /api/translation/balance` | Read personal account balance; body is a cloud `translation` object with the provider key |
 | `POST /api/video` | Create a native-YouTube session and warm up models |
 | `GET /api/video/{id}` | Read `ready_until` and `finished`; also refreshes activity |
 | `POST /api/video/{id}/next` | Decode and translate the next audio window |

@@ -9,6 +9,7 @@
 | `extension/youtube-offscreen.mjs` | YouTube gateway requests and session cancellation |
 | `extension/connection.mjs` | Exact server-origin allowlist; credentials are never sent to arbitrary URLs |
 | `extension/translation.mjs` | Cloud provider defaults and browser-side translation settings validation |
+| `extension/model-picker.mjs` | Translation-first model search, selection, account balance, and explicit cost estimates |
 | `extension/offscreen.js` | Tab audio capture, PCM windows, MediaRecorder, gateway transport |
 | `extension/pcm-worklet.js` | Mono PCM resampling to 16 kHz |
 | `extension/store-worker.js` | OPFS recording and cue storage |
@@ -28,6 +29,8 @@ The extension uses Manifest V3, activeTab, tabCapture, offscreen, storage, scrip
 `server/synchro/pipeline.py` recognizes speech, translates text, synthesizes speech, joins WAV parts, normalizes loudness, and adjusts tempo. The translation API supports llama.cpp's OpenAI-compatible endpoint or Ollama's native endpoint; it requires structured JSON output.
 
 `server/synchro/cloud.py` adds fixed-endpoint OpenAI, Kilo Gateway, and OpenRouter calls. Credentials and model selections belong to a session, not global pipeline state. HY-MT2 uses plain-text translation and optional local speech preparation; general instruction models use validated structured output. See [cloud behavior](CLOUD.md).
+
+`server/synchro/catalog.py` fetches compatible public model catalogs and per-token prices through the same configured server routes, caching only that public metadata for five minutes. Personal balance requests are authenticated separately with the submitted key and never placed in the shared cache. Responses contain only the remaining USD balance and fetch time, with `Cache-Control: no-store`.
 
 `deploy/gigaam_server.py` and `deploy/silero_server.py` are separate authenticated loopback services. Both serialize inference instead of creating a CPU thread pool for every viewer. The reference configuration uses eight intra-op CPU threads.
 

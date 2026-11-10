@@ -104,3 +104,14 @@ class AccessTests(unittest.IsolatedAsyncioTestCase):
         current = api.sessions[response.json()['session_id']]
         self.assertEqual(current.voice, 'male')
         self.assertEqual(current.translation.provider, 'local')
+
+    async def test_account_metadata_still_requires_synchro_authentication(self):
+        for path in ['models','balance']:
+            body={'provider':'kilo'}
+            if path=='balance': body['api_key']='private-provider-key-123'
+            response=await self.client.post('/api/translation/'+path,json=body)
+            self.assertEqual(response.status_code,401)
+            wrong=self.headers('alice')
+            wrong['Origin']='https://untrusted.example'
+            response=await self.client.post('/api/translation/'+path,json=body,headers=wrong)
+            self.assertEqual(response.status_code,403)

@@ -1,9 +1,11 @@
 import {serverBase} from './connection.mjs';
 import {PROVIDERS, translationSettings} from './translation.mjs';
+import {createModelPicker} from './model-picker.mjs';
 const token = document.querySelector('#token'), delay = document.querySelector('#delay'), status = document.querySelector('#status');
 const config = await chrome.storage.local.get(['token', 'delay', 'autoUpdate', 'voice', 'apiBase', 'translation', 'cloudProfiles']);
 const provider = document.querySelector('#provider'), cloudModel = document.querySelector('#cloudModel'), cloudKey = document.querySelector('#cloudKey');
 const profiles = config.cloudProfiles || {};
+let modelPicker;
 let selected = Object.hasOwn(PROVIDERS, config.translation?.provider) ? config.translation.provider : 'local';
 provider.value = selected;
 function rememberProvider() {
@@ -16,9 +18,12 @@ function showProvider() {
   cloudKey.value = '';
   cloudKey.placeholder = profiles[selected]?.api_key ? 'API key saved' : 'Enter provider API key';
   document.querySelector('#hyNote').hidden = !cloudModel.value.startsWith('tencent/hy-mt2-');
+  void modelPicker?.setProvider();
 }
 provider.onchange = () => { rememberProvider(); showProvider(); };
-cloudModel.oninput = () => { document.querySelector('#hyNote').hidden = !cloudModel.value.startsWith('tencent/hy-mt2-'); };
+cloudModel.oninput = () => { document.querySelector('#hyNote').hidden = !cloudModel.value.startsWith('tencent/hy-mt2-'); modelPicker?.renderSelection(); };
+cloudKey.onchange = () => modelPicker?.loadBalance();
+cloudKey.oninput = () => modelPicker?.invalidateBalance();
 showProvider();
 function translation() { rememberProvider(); return translationSettings({provider: selected, ...profiles[selected]}); }
 document.querySelector('#clearCloudKey').onclick = async () => {
@@ -29,6 +34,7 @@ document.querySelector('#clearCloudKey').onclick = async () => {
     await chrome.storage.local.set({translation: config.translation});
   }
   await chrome.storage.local.set({cloudProfiles: profiles});
+  modelPicker.invalidateBalance();
   document.querySelector('#translationStatus').textContent = 'Provider key removed. Save a valid provider before starting cloud translation.';
 };
 document.querySelector('#testTranslation').onclick = async (event) => {
@@ -42,7 +48,7 @@ document.querySelector('#testTranslation').onclick = async (event) => {
     if (!response.ok) throw new Error(typeof result.detail === 'string' ? result.detail : `Server: ${response.status}`);
     resultText.textContent = `${PROVIDERS[result.provider].name} · ${result.seconds} s · ${result.translation}`;
   } catch (error) { resultText.textContent = error.message; }
-  finally { button.disabled = false; }
+  finally { button.disabled = false; void modelPicker.loadBalance(); }
 };
 const server = document.querySelector('#server'); server.value = serverBase(config.apiBase);
 const voice = document.querySelector('#voice'); voice.value = ['female', 'male', 'male-eugene'].includes(config.voice) ? config.voice : 'female';
@@ -62,6 +68,7 @@ document.querySelector('#import').onchange = async (event) => {
     if (typeof data.token !== 'string' || data.token.length < 24) throw new Error('Invalid connection file');
     server.value = serverBase(data.server_url);
     token.value = data.token; status.textContent = 'Connection imported. Click Save and test.';
+    void modelPicker.setProvider();
   } catch (error) { status.textContent = error.message; }
 };
 document.querySelector('#save').onclick = async () => {
@@ -78,5 +85,19 @@ document.querySelector('#save').onclick = async () => {
     cloudKey.value = ''; cloudKey.placeholder = selected === 'local' ? '' : 'API key saved';
     config.token = savedToken; token.value = ''; token.placeholder = 'Token saved';
     status.textContent = 'Saved. Server is available.';
+    void modelPicker.setProvider();
   } catch (error) { status.textContent = `Connection failed: ${error.message}. Check the server URL and access key.`; }
 };
+
+async function accountRequest(path, body, signal) {
+  const savedToken = token.value.trim() || config.token;
+  if (!savedToken) throw new Error('Import your Synchro connection first');
+  const response = await fetch(serverBase(server.value) + path, {method:'POST', cache:'no-store',
+    headers:{Authorization:`Bearer ${savedToken}`,'Content-Type':'application/json'}, body:JSON.stringify(body),
+    signal: AbortSignal.any([signal, AbortSignal.timeout(30000)])});
+  const result = await response.json();
+  if (!response.ok) throw new Error(typeof result.detail === 'string' ? result.detail : `Server: ${response.status}`);
+  return result;
+}
+modelPicker = createModelPicker({provider:()=>selected, model:cloudModel, settings:translation, request:accountRequest});
+void modelPicker.setProvider();

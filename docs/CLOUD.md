@@ -20,6 +20,20 @@ Synchro can translate recognized text using **OpenAI**, **Kilo Gateway**, or **O
 
 Model IDs are editable; availability and pricing depend on the provider and account. General instruction models must support Chat Completions and JSON-schema structured output. Arbitrary API base URLs are not accepted. OpenAI requests use `max_completion_tokens` and `store=false`; router requests use `max_tokens`. Output length is bounded. Reasoning models needing different parameters may not work with this prototype.
 
+## Model list, balance, and price estimate
+
+Version 0.4.1 adds searchable live Kilo and OpenRouter catalogs. HY-MT2 30B-A3B, 7B, and 1.8B appear first, followed by the tested Gemma 26B and a small set of fast general-model candidates. This is a shortlist for translation, not a claim that every model has been benchmarked. Your saved choice is preserved and highlighted; choose another row to change it. Other compatible models are searchable. At most 60 matches are shown at once, so narrow a broad search. You can still enter an exact ID manually.
+
+The list filters for text output and structured-output support, with a special exception for supported HY-MT2 plain-text translation. Image-output and embedding models are excluded. Provider catalogs and token prices are fetched through the same configured server tunnels and cached for up to five minutes. **Refresh models** rechecks the catalog and shows its fetch time.
+
+Kilo's available personal balance is read from its account API using your key. OpenRouter shows remaining personal credits. Balances refresh when the provider/key is selected or saved, after a translator test, and when you select **Refresh balance**. They are not continuously polled during playback. Account balances are not placed in the shared catalog cache or persisted in extension storage. Invalid keys and unavailable balance data show an error, not an assumed zero. Organization balances are not implemented.
+
+Each model row shows an approximate USD cost per minute of speech. The selected model also shows cost per hour and its published input/output price per million tokens. The calculation is:
+
+`estimated minute = input tokens per minute × input price per token + output tokens per minute × output price per token`
+
+The baseline assumes 600 input + 450 output tokens/minute for HY-MT2, or 3,500 input + 450 output tokens/minute for general models, whose repeated instructions and recent context add input overhead. These are approximate assumptions, not measured billable usage or a guarantee. Speech pace, tokenizer, phrasing, retries, extra reasoning, and caching can change the bill. The estimate covers cloud text translation only; local ASR, speech synthesis, and HY-MT2's local speech preparation are excluded. Missing prices display **unavailable**; confirmed zero prices remain zero. Direct OpenAI model pricing is not supplied by these router catalogs, so its existing manual model-ID field remains available without a guessed price.
+
 Provider profiles keep separate model IDs and keys in this browser's local extension storage. The key input is masked and displays a saved-key placeholder on reopen. **Remove this provider key** removes that profile's key and resets its saved active selection to Local server. Switching providers does not send a key to the previous provider. Settings changes take effect on a new playback session.
 
 ## HY-MT2 is a specialized translator

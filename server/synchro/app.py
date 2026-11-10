@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 from .pipeline import Pipeline, Session, WINDOW
 from .youtube import YoutubeAudio, youtube_url
 from .cloud import TranslationSettings
+from .catalog import CatalogRequest, ProviderCatalog
 
 TOKEN = os.environ.get('SYNCHRO_TOKEN', '')
 ORIGIN = os.environ.get('SYNCHRO_ORIGIN', '')
@@ -36,6 +37,7 @@ pipeline = Pipeline(os.environ.get('SPEECH_URL', 'http://127.0.0.1:8002'),
                     cloud_proxy=os.environ.get('SYNCHRO_CLOUD_PROXY', ''),
                     cloud_tunnels={name: int(os.environ.get(f'SYNCHRO_{name.upper()}_TUNNEL_PORT', '0'))
                                    for name in ['openai', 'kilo', 'openrouter']})
+catalog = ProviderCatalog(pipeline)
 sessions = {}
 registry_lock = asyncio.Lock()
 warmup_lock = asyncio.Lock()
@@ -147,7 +149,7 @@ async def reserve(owner, voice, translation=None):
 
 @app.get('/health')
 async def health():
-    return {'service': 'synchro', 'version': '0.4.0', 'max_sessions': MAX_SESSIONS}
+    return {'service': 'synchro', 'version': '0.4.1', 'max_sessions': MAX_SESSIONS}
 
 
 @app.get('/api/check')
@@ -248,6 +250,26 @@ async def check_translation(body: TranslationSettings, owner=Depends(authenticat
         raise HTTPException(502, 'Translation check failed; check the model service')
     return {'ok': True, 'provider': body.provider, 'model': body.model, 'translation': text,
             'seconds': round(time.monotonic() - started, 3)}
+
+
+@app.post('/api/translation/models')
+async def translation_models(body: CatalogRequest, owner=Depends(authenticate)):
+    try:
+        result = await catalog.models(body.provider)
+        return JSONResponse(result, headers={'Cache-Control': 'no-store'})
+    except ValueError as error:
+        raise HTTPException(502, str(error))
+
+
+@app.post('/api/translation/balance')
+async def translation_balance(body: TranslationSettings, owner=Depends(authenticate)):
+    try:
+        result = await catalog.balance(body)
+        return JSONResponse(result, headers={'Cache-Control': 'no-store'})
+    except ValueError as error:
+        raise HTTPException(502, str(error))
+
+
 @app.get('/api/video/{session_id}')
 async def video_status(session_id: str, owner=Depends(authenticate)):
     current = owned(session_id, owner)

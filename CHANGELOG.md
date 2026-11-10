@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.1 — 2026-11-10
+
+- Added searchable Kilo/OpenRouter model catalogs, translation-first ordering, and highlighted selection.
+- Added personal Kilo balance and OpenRouter remaining credits with manual refresh and per-key isolation.
+- Displayed approximate translation cost per minute/hour using live token prices and explicit token-budget assumptions.
+- Kept unknown prices and unavailable balances distinct from zero; preserved manual model entry and existing choices.
+
 ## 0.4.0 — 2026-11-10
 
 - Added per-session Local, OpenAI, Kilo Gateway, and OpenRouter text translation choices in settings.

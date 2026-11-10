@@ -10,9 +10,16 @@
 <p class="small">Applies when translation is started again.</p>
 <h2>Text translation</h2>
 <label>Provider<select id="provider"><option value="local">Local server</option><option value="openai">OpenAI</option><option value="kilo">Kilo Gateway</option><option value="openrouter">OpenRouter</option></select></label>
-<div id="cloudSettings" hidden><label>Model ID<input id="cloudModel" type="text" spellcheck="false" autocomplete="off" maxlength="128"></label>
+<div id="cloudSettings" hidden>
 <label>Provider API key<input id="cloudKey" type="password" spellcheck="false" autocomplete="off"></label>
 <button id="clearCloudKey" class="secondary" type="button">Remove this provider key</button>
+<section id="balancePanel" class="balance-panel" aria-label="Provider balance" hidden><div><span class="small">Available balance</span><strong id="cloudBalance">—</strong></div><button id="refreshBalance" type="button" class="secondary">Refresh balance</button><p id="balanceStatus" class="small" role="status"></p></section>
+<section id="modelCatalog" class="model-catalog" aria-label="Choose a translation model" hidden>
+<div class="model-catalog-heading"><h3>Choose a model</h3><button id="refreshModels" type="button" class="secondary">Refresh models</button></div>
+<label>Search models<input id="modelSearch" type="search" autocomplete="off" placeholder="HY-MT2, Gemma, Gemini…"></label>
+<p id="modelStatus" class="small" role="status"></p><div id="modelResults" class="model-results" role="group" aria-label="Available translation models" aria-busy="false"></div><p id="modelCount" class="small muted"></p></section>
+<label>Selected model ID<input id="cloudModel" type="text" spellcheck="false" autocomplete="off" maxlength="128"></label>
+<section id="modelPricing" class="model-pricing" aria-label="Estimated translation cost" hidden><strong id="modelEstimate"></strong><p id="modelRates" class="small"></p><p id="estimateAssumptions" class="small"></p></section>
 <p class="small">The key is stored in this browser profile and sent to your Synchro server for this playback session. Transcript text is sent to the selected cloud provider; recognition and speech stay local. API usage is billed to your account.</p>
 <p id="hyNote" class="small" hidden>HY-MT2 translates plain text. The local translation model prepares Latin names and numbers for Silero when needed; keep it available.</p></div>
 <button id="testTranslation" class="secondary" type="button">Test translator</button><p id="translationStatus" class="small" role="status"></p>

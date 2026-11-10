@@ -1,6 +1,6 @@
 # Roadmap
 
-Prototype 0.4.0 implements English-to-Russian dubbing with self-hosted recognition and voices, plus local or optional cloud text translation. YouTube uses its native player and a separate server audio stream; other sites use tab capture.
+Prototype 0.4.1 implements English-to-Russian dubbing with self-hosted recognition and voices, plus local or optional cloud text translation. YouTube uses its native player and a separate server audio stream; other sites use tab capture.
 
 ## Implemented
 
@@ -13,6 +13,7 @@ Prototype 0.4.0 implements English-to-Russian dubbing with self-hosted recogniti
 - Disk-backed capture with decoded-buffer cleanup and no fixed application recording-duration limit.
 - Deferred reload after local extension-file updates; public English documentation and MIT source release.
 - Per-viewer OpenAI, Kilo Gateway, and OpenRouter translation settings and a translator test button.
+- Searchable priced model catalogs, translation-first ordering, personal balances, and approximate cost per minute/hour.
 
 ## Next validation
 
