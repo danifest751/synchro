@@ -24,6 +24,9 @@ from .cloud import TranslationSettings
 from .catalog import CatalogRequest, ProviderCatalog
 from .usage import collect_usage, usage_summary
 
+if os.environ.get('SYNCHRO_HOST_MODE') == '1':
+    from .host import HostPipeline as Pipeline
+
 TOKEN = os.environ.get('SYNCHRO_TOKEN', '')
 ORIGIN = os.environ.get('SYNCHRO_ORIGIN', '')
 CLIENTS_FILE = os.environ.get('SYNCHRO_CLIENTS_FILE', '')
@@ -81,6 +84,8 @@ async def lifespan(app):
     await pipeline.client.aclose()
     if pipeline.cloud_client:
         await pipeline.cloud_client.aclose()
+    if getattr(pipeline, 'host_executor', None):
+        pipeline.host_executor.shutdown(wait=False, cancel_futures=True)
 
 
 app = FastAPI(title='Synchro', lifespan=lifespan, docs_url=None, redoc_url=None)

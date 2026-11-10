@@ -19,7 +19,7 @@ python tools/update_extension.py --target /path/to/Synchro/extension
 
 The helper accepts only the stable latest release of `danifest751/synchro`, the exact `Synchro-extension.zip` asset, a matching numeric manifest version and GitHub's SHA-256 asset digest. Drafts, prereleases, downgrades, unsafe archive paths, oversized archives and new extension permissions are rejected. An update that needs new permissions must be reviewed and installed manually.
 
-Existing server endpoints, host permissions, CSP and the manifest public key are preserved. Chrome storage remains with that extension identity, including provider profiles and connection keys. Private guest connection files outside the extension folder are not overwritten. Public release archives contain no personal access keys.
+Existing server endpoints, host permissions, CSP and the manifest public key are preserved. Releases that include host-worker support add only its fixed loopback origin `http://127.0.0.1:8778` to the existing host permissions and connect policy. Chrome storage remains with that extension identity, including provider profiles and connection keys. Private guest connection files outside the extension folder are not overwritten. Public release archives contain no personal access keys.
 
 Before replacement the helper copies the existing extension to `.synchro-update-backups/<version>-<timestamp>` beside its folder. Scripts are replaced first and the version manifest last. If copying fails, the helper restores the backup. Old backup folders are retained for manual rollback. Close translation before applying a manual rollback, restore the desired backup into the same extension folder, then reload it in Chrome.
 

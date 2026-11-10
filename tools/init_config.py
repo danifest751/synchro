@@ -14,7 +14,7 @@ args = parser.parse_args()
 url = urlsplit(args.server_url)
 if (not re.fullmatch(r'[a-p]{32}', args.extension_id) or not url.hostname
         or url.username or url.password or url.path not in ('', '/') or url.query or url.fragment
-        or (url.scheme != 'https' and args.server_url != 'http://127.0.0.1:8768')
+        or (url.scheme != 'https' and args.server_url not in ('http://127.0.0.1:8768', 'http://127.0.0.1:8778'))
         or any(char.isspace() for char in args.server_url)):
     parser.error('Use an HTTPS origin (or the default loopback URL) and a 32-letter extension ID')
 local = ROOT / '.local'

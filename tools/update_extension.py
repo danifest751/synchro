@@ -57,6 +57,16 @@ def install(content, target, expected_version):
     for key in ['host_permissions', 'content_security_policy', 'key']:
         if key in current:
             manifest[key] = current[key]
+    host_origin = 'http://127.0.0.1:8778'
+    if host_origin + '/*' in json.loads(files['manifest.json']).get('host_permissions', []):
+        manifest['host_permissions'] = list(dict.fromkeys(manifest.get('host_permissions', []) + [host_origin + '/*']))
+        policies = dict(manifest.get('content_security_policy', {}))
+        rules = policies.get('extension_pages', '').split(';')
+        for index, rule in enumerate(rules):
+            if rule.strip().startswith('connect-src ') and host_origin not in rule.split():
+                rules[index] = rule + ' ' + host_origin
+        policies['extension_pages'] = ';'.join(rules)
+        manifest['content_security_policy'] = policies
     files['manifest.json'] = json.dumps(manifest, ensure_ascii=False, indent=2).encode('utf-8')
     # Private deployments keep their configured API allowlist across public updates.
     connection = (target / 'connection.mjs').read_text(encoding='utf-8')

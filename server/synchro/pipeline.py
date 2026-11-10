@@ -175,6 +175,7 @@ class Pipeline:
         self.asr_url = asr_url
         self.asr_token = asr_token
         self.silero_url, self.silero_token = silero_url, silero_token
+        self.russian_speech = bool(silero_url)
         self.client = httpx.AsyncClient(timeout=90, trust_env=False)
         self.cloud_client = httpx.AsyncClient(timeout=60, trust_env=False, proxy=cloud_proxy) if cloud_proxy else None
         self.cloud_tunnels = cloud_tunnels or {}
@@ -223,7 +224,7 @@ class Pipeline:
         return data['choices'][0]['message']['content'] if self.api == 'llama' else data['message']['content']
 
     async def translate(self, text: str, history: list, seconds: float, shorter=False, translation=None) -> str:
-        russian_speech = self.silero_url or translation and translation.mode == 'cloud_all'
+        russian_speech = self.russian_speech or translation and translation.mode == 'cloud_all'
         if translation and translation.is_hymt:
             # HY-MT2 is a plain-text translator, not an instruction-following JSON model.
             port = self.cloud_tunnels.get(translation.provider, 0)

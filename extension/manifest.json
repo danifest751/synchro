@@ -14,6 +14,7 @@
   ],
   "host_permissions": [
     "http://127.0.0.1:8768/*",
+    "http://127.0.0.1:8778/*",
     "https://synchro.example.com/*"
   ],
   "background": {
@@ -28,7 +29,7 @@
     "open_in_tab": true
   },
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' http://127.0.0.1:8768 https://synchro.example.com"
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' http://127.0.0.1:8768 http://127.0.0.1:8778 https://synchro.example.com"
   },
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAyCkwUNRTrVqhIxGrLIa0GLlMZaSnkYtWfatSJjS34YnTyvIQmsT11YJWLWGttBNIhY4pYJlfUa/scwmzAPnGzAkyHVdT9fIzNRKY+9+Q0soQJE4FERes12EodUV855IqCECl//X8MJ/CE9IxQdQdiCb2pGmpy211fl3WIbsN/HAerMJmdpmIZJgemFX4RnDM/Xokik5PjDPcAwBTUJVtC3/hszfGHBRR87E3o5kcZZIqSNxwmcy8GsTTs9ft/1lNfteR5WeCqdDaldmh0p+rUvlBbmhKGATjcGwVJ4QCA7zDlsQ7x+0aVvpS4KSGI+D2qpPyFxCxc4WyO3BQEpxr0wIDAQAB"
 }

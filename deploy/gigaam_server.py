@@ -63,8 +63,8 @@ class Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get('Content-Length', '0'))
         except ValueError:
             length = 0
-        if not 0 < length <= 256000 or length % 2 or self.headers.get('Transfer-Encoding'):
-            self.respond(400, {'error': 'Expected up to 8 seconds of PCM16 mono 16kHz'})
+        if not 0 < length <= 21 * 32000 or length % 2 or self.headers.get('Transfer-Encoding'):
+            self.respond(400, {'error': 'Expected up to 21 seconds of PCM16 mono 16kHz'})
             return
         pcm = self.rfile.read(length)
         if len(pcm) != length:

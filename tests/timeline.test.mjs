@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {canStart, playableUntil, scheduleCue, cueRate, cueAt} from '../extension/timeline.mjs';
 import {updateAction} from '../extension/updates.mjs';
-import {serverBase, PUBLIC_API, LOCAL_API} from '../extension/connection.mjs';
+import {serverBase, PUBLIC_API, LOCAL_API, HOST_API} from '../extension/connection.mjs';
 import {translationSettings} from '../extension/translation.mjs';
 import {estimateMinute, rankedModels} from '../extension/model-picker.mjs';
 
@@ -37,6 +37,7 @@ test('updating never interrupts capture or an open player', () => {
 
 test('connection tokens can only be sent to the two Synchro endpoints', () => {
   assert.equal(serverBase(), LOCAL_API);
+  assert.equal(serverBase(HOST_API), HOST_API);
   assert.equal(serverBase(PUBLIC_API + '/'), PUBLIC_API);
   for (const url of ['https://evil.example', PUBLIC_API + '.evil.example', PUBLIC_API.replace('://', '://token@'), PUBLIC_API + '/other', PUBLIC_API.replace('https:', 'http:')]) {
     assert.throws(() => serverBase(url));
