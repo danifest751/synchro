@@ -1,0 +1,21 @@
+[Unit]
+Description=Synchro GigaAM Multilingual CPU recognition, 8 threads
+After=network.target
+
+[Service]
+DynamicUser=yes
+EnvironmentFile=/etc/synchro-asr.env
+Environment=HF_HUB_OFFLINE=1
+Environment=HF_HOME=/run/synchro-asr
+RuntimeDirectory=synchro-asr
+WorkingDirectory=/opt/synchro-asr
+ExecStart=/opt/synchro-asr/.venv/bin/python /opt/synchro-asr/gigaam_server.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

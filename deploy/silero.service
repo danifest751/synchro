@@ -1,0 +1,14 @@
+[Unit]
+Description=Synchro Silero CPU voices
+After=network.target
+
+[Service]
+WorkingDirectory=%h/synchro
+EnvironmentFile=%h/synchro/.local/silero.env
+ExecStart=%h/synchro/.venv-speech/bin/python %h/synchro/deploy/silero_server.py
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=default.target

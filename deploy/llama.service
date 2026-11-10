@@ -1,0 +1,14 @@
+[Unit]
+Description=Synchro local translation with llama.cpp
+After=network.target
+
+[Service]
+Environment=CUDA_VISIBLE_DEVICES=0
+Environment=CUDA_DEVICE_ORDER=PCI_BUS_ID
+Environment=GGML_VK_VISIBLE_DEVICES=-1
+ExecStart=%h/llama.cpp/build/bin/llama-server -m %h/synchro/models/translation.gguf -ngl 999 --host 127.0.0.1 --port 11436 -c 6144 -np 3 -t 6 -tb 6 -fa on --jinja --alias synchro-translator
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

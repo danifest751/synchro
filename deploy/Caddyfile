@@ -1,0 +1,12 @@
+synchro.example.com {
+    request_body {
+        max_size 512KB
+    }
+    reverse_proxy 127.0.0.1:18768 {
+        transport http {
+            # SSH tunnels and Uvicorn may close idle connections before Caddy does.
+            keepalive off
+            response_header_timeout 120s
+        }
+    }
+}

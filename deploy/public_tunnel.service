@@ -1,0 +1,11 @@
+[Unit]
+Description=Synchro private link to an optional public gateway
+After=network-online.target
+
+[Service]
+ExecStart=/usr/bin/ssh -NT -i %h/.ssh/synchro_public_ed25519 -o BatchMode=yes -o ExitOnForwardFailure=yes -o StrictHostKeyChecking=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -R 127.0.0.1:18768:127.0.0.1:8768 -L 127.0.0.1:13008:127.0.0.1:3008 synchro-gateway@gateway.example.com
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

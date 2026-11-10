@@ -1,0 +1,16 @@
+.git
+.codegraph
+.local
+output
+.playwright-cli
+**/__pycache__
+**/*.pyc
+.venv*
+models
+.env
+.env.*
+*.zip
+*.pem
+*.key
+connection*.json
+tokens.json

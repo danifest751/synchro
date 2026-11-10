@@ -1,0 +1,50 @@
+# Models, licenses, and performance
+
+## Reference inference stack
+
+| Task | Model/runtime | Placement |
+| --- | --- | --- |
+| Primary ASR | GigaAM Multilingual 220M CTC, ONNX Runtime | CPU, 8 intra-op threads |
+| ASR fallback | Whisper large-v3-turbo, faster-whisper through Speaches | Separate GPU |
+| Text translation | Gemma 4 26B-A4B GGUF, llama.cpp with optional MTP | RTX 5060 Ti 16 GB |
+| Speech | Silero Russian v5.5 | CPU, 8 threads |
+
+Synchro translates **recognized text**. It does not translate video frames or perform end-to-end speech-to-speech inference. The public repository contains integration code, not weights. Download and review models separately.
+
+## What is implemented
+
+The gateway's translator requests a JSON object containing `translation`, passes the last two source/translation pairs as context, and asks for speech-friendly Russian. With Silero enabled it rejects remaining Latin letters and digits after one rewrite attempt. The model must support these requirements; a raw translation benchmark is not proof of drop-in compatibility.
+
+GigaAM's public model card describes moderate English quality. The current service uses greedy CTC decoding and does not expose a general accuracy/temperature/beam control. Silero exposes three selected Russian speakers. The fallback Piper voices and accent endpoint are legacy paths rather than the recommended fresh installation.
+
+## Historical prototype measurements
+
+These are short development measurements from November 9–10, 2026. They are not hardware guarantees or long-session service-level claims. Model revisions, quantization, runtime build, audio content, queueing, and other GPU workloads matter.
+
+- Gemma 26B-A4B with MTP on RTX 5060 Ti: approximately **202–227 generated tokens/s**, **0.41–0.77 s** for short translation requests. The full model/draft setup used roughly 15.6 GB of VRAM.
+- GigaAM 220M on Xeon E5-2630 v4, warmed: approximately **0.38 s** for the 11-second JFK speech sample with eight threads. More threads were not automatically faster; ten threads took approximately 0.42 s.
+- Three simultaneous different videos, separate keys and voices, four windows each: approximately **9.4 / 10.1 / 15.6 s** of processing for about 28 seconds of source per viewer. This was a short integration test, not an hour-long capacity test.
+
+Additional standalone text-translator experiments on **CMP 50HX**:
+
+| Model | Short sequential phrase latency | Shared model throughput | Approximate extra VRAM after warmup |
+| --- | --- | --- | --- |
+| HY-MT2 1.8B Q4_K_M, llama.cpp | 0.13–0.40 s | 5.96 phrases/s, 4 slots, 6 clients | 1.8 GiB, 4 slots |
+| TranslateGemma 4B Q4_K_M, llama.cpp | 0.21–0.57 s | 3.61 phrases/s, 4 slots, 6 clients | 3.4 GiB, 4 slots |
+| OPUS-MT TC Big EN→ZLE FP16, CTranslate2 | 0.02–0.06 s | 108 phrases/s, explicit batch of 8 | 0.7 GiB, single model after warmup |
+
+The LLM tests used continuous concurrent requests; OPUS used fixed batches. Those throughput columns are different workloads, not an apples-to-apples ranking. VRAM is the observed increment after warmup, not peak allocation. HY-MT2 and TranslateGemma generated roughly 166 and 99 tokens/s respectively; their tokenizers differ. OPUS was very fast but mistranslated idioms literally. TranslateGemma handled some idioms well and also made factual/grammatical mistakes. No alternative in this table has been wired into the shipped gateway.
+
+Run `tools/smoke.py`, `tools/smoke_youtube.py`, and `tools/bench_viewers.py` against your own installation to measure the complete chain. Warmup/download time and processing time should be reported separately. Long viewing sessions, queue fairness, and recovery need further validation.
+
+## Third-party terms
+
+Synchro's [MIT license](../LICENSE) applies to its own source and documentation. It grants no additional rights to separately obtained weights, voices, runtimes, or content.
+
+- [GigaAM Multilingual](https://huggingface.co/ai-sage/GigaAM-Multilingual) and the [ONNX export](https://huggingface.co/istupakov/gigaam-multilingual-ctc-onnx) identify MIT licenses in their model cards.
+- [Gemma 4](https://ai.google.dev/gemma/apache_2) is published under Apache 2.0. Other Gemma generations and specialized variants can have different terms; check the actual model you download.
+- [Silero's default model license](https://github.com/snakers4/silero-models/blob/master/LICENSE) is CC BY-NC-SA 4.0. Obtain appropriate rights before commercial deployment of the selected weights; the integration code being MIT does not remove noncommercial model terms.
+- Whisper, faster-whisper, Speaches, CTranslate2, ONNX Runtime, PyTorch, and individual Piper voices retain their own terms.
+- The optional Piper/eSpeak data path includes GPL-licensed eSpeak NG material inside the built speech image. Distribution of that image has separate obligations. This repository does not bundle that image or those data.
+
+See [third-party notices](../THIRD_PARTY_NOTICES.md) for the retained Avorythm notice and upstream links.

@@ -1,0 +1,16 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Synchro settings</title><link rel="stylesheet" href="style.css"></head>
+<body><main class="settings"><header><h1>Synchro connection</h1><span class="badge" id="version"></span></header>
+<p>Import a personal connection file. Translation runs on your self-hosted server.</p>
+<label>Import connection<input id="import" type="file" accept="application/json,.json"></label>
+<p class="small">Select your <code>connection.json</code>. The access key is stored in this browser profile.</p>
+<label>Server URL<input id="server" type="url" spellcheck="false" autocomplete="off"></label>
+<label>Server token<input id="token" type="password" autocomplete="off" spellcheck="false"></label>
+<label>Initial translation buffer in seconds<input id="delay" type="number" value="20" min="10" max="40"></label>
+<label>Voiceover voice<select id="voice"><option value="female">Xenia · female</option><option value="male">Aidar · male</option><option value="male-eugene">Eugene · male</option></select></label>
+<p class="small">Applies when translation is started again.</p>
+<div class="row"><button id="save">Save and test</button><span id="status" role="status"></span></div>
+<p class="small">YouTube video plays directly in its native player; the server fetches audio only. Seeking restarts translation at the selected position. Other sites use a separate player with tab recording and no fixed duration limit.</p>
+<h2>Updates</h2><label class="check"><input type="checkbox" id="autoUpdate" checked>Automatically apply updates from the extension folder</label>
+<p class="small">Checks once a minute. Updates wait until YouTube translation or the separate player is closed. Put new files in the same extension folder.</p>
+<button id="checkUpdate" class="secondary">Check for updates</button><p id="updateStatus" class="small" role="status"></p>
+<p class="muted" id="origin"></p></main><script type="module" src="options.js"></script></body></html>
