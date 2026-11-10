@@ -5,6 +5,15 @@ const token = document.querySelector('#token'), delay = document.querySelector('
 const config = await chrome.storage.local.get(['token', 'delay', 'autoUpdate', 'voice', 'apiBase', 'translation', 'cloudProfiles']);
 const provider = document.querySelector('#provider'), cloudModel = document.querySelector('#cloudModel'), cloudKey = document.querySelector('#cloudKey');
 const profiles = config.cloudProfiles || {};
+const processingMode = document.querySelector('#processingMode');
+processingMode.value = config.translation?.mode || (config.translation?.provider && config.translation.provider !== 'local' ? 'cloud_translation' : 'local');
+function showMode() {
+  const allCloud = processingMode.value === 'cloud_all';
+  document.querySelector('#modeNote').textContent = allCloud ? 'One provider key for cloud ASR, translation and speech. No local AI models are used. Audio is uploaded. FFmpeg and the Synchro gateway still run on your server. Cloud speech is AI-generated. Speech charges are additional to the text estimate.' : processingMode.value === 'cloud_translation' ? 'All text processing uses the selected cloud provider. Recognition and voices use your own server.' : 'Recognition, text translation and voices use your own computer or server.';
+  const labels = allCloud ? ['Nova · cloud female', 'Onyx · cloud male', 'Echo · cloud male'] : ['Xenia · female', 'Aidar · male', 'Eugene · male'];
+  [...document.querySelector('#voice').options].forEach((option, index) => { option.textContent = labels[index]; });
+  document.querySelector('#testTranslation').textContent = allCloud ? 'Test full cloud pipeline' : 'Test translator';
+}
 let modelPicker;
 let selected = Object.hasOwn(PROVIDERS, config.translation?.provider) ? config.translation.provider : 'local';
 provider.value = selected;
@@ -20,12 +29,19 @@ function showProvider() {
   document.querySelector('#hyNote').hidden = !cloudModel.value.startsWith('tencent/hy-mt2-');
   void modelPicker?.setProvider();
 }
-provider.onchange = () => { rememberProvider(); showProvider(); };
+provider.onchange = () => { rememberProvider(); if (provider.value === 'local') processingMode.value = 'local'; else if (processingMode.value === 'local') processingMode.value = 'cloud_translation'; showProvider(); showMode(); };
+processingMode.onchange = () => {
+  rememberProvider();
+  if (processingMode.value === 'local') provider.value = 'local';
+  else if (provider.value === 'local') provider.value = 'kilo';
+  showProvider(); showMode();
+};
 cloudModel.oninput = () => { document.querySelector('#hyNote').hidden = !cloudModel.value.startsWith('tencent/hy-mt2-'); modelPicker?.renderSelection(); };
 cloudKey.onchange = () => modelPicker?.loadBalance();
 cloudKey.oninput = () => modelPicker?.invalidateBalance();
 showProvider();
-function translation() { rememberProvider(); return translationSettings({provider: selected, ...profiles[selected]}); }
+showMode();
+function translation() { rememberProvider(); return translationSettings({provider: selected, ...profiles[selected], mode: processingMode.value}); }
 document.querySelector('#clearCloudKey').onclick = async () => {
   if (profiles[selected]) delete profiles[selected].api_key;
   cloudKey.value = ''; cloudKey.placeholder = 'Enter provider API key';
@@ -41,12 +57,14 @@ document.querySelector('#testTranslation').onclick = async (event) => {
   const button = event.target, resultText = document.querySelector('#translationStatus');
   button.disabled = true; resultText.textContent = 'Testing translator…';
   try {
-    const response = await fetch(serverBase(server.value) + '/api/translation/check', {method: 'POST',
+    const selectedTranslation = translation(), full = selectedTranslation.mode === 'cloud_all';
+    const response = await fetch(serverBase(server.value) + (full ? '/api/pipeline/check' : '/api/translation/check'), {method: 'POST',
       headers: {Authorization: `Bearer ${token.value.trim() || config.token}`, 'Content-Type': 'application/json'},
-      body: JSON.stringify(translation()), signal: AbortSignal.timeout(90000)});
+      body: JSON.stringify(full ? {voice: document.querySelector('#voice').value, translation: selectedTranslation} : selectedTranslation), signal: AbortSignal.timeout(115000)});
     const result = await response.json();
     if (!response.ok) throw new Error(typeof result.detail === 'string' ? result.detail : `Server: ${response.status}`);
-    resultText.textContent = `${PROVIDERS[result.provider].name} · ${result.seconds} s · ${result.translation}`;
+    const usage = result.cloud_usage;
+    resultText.textContent = `${PROVIDERS[result.provider].name} · ${result.seconds} s · ${result.translation}` + (usage && Object.keys(usage.stages).length ? ` · Provider-reported ${usage.unpriced_requests ? '≥' : ''}$${usage.reported_cost_usd.toFixed(6)}${usage.unpriced_requests ? ' (incomplete price data)' : ''}` : '');
   } catch (error) { resultText.textContent = error.message; }
   finally { button.disabled = false; void modelPicker.loadBalance(); }
 };

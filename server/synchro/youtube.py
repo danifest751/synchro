@@ -8,7 +8,7 @@ import sys
 import time
 from urllib.parse import parse_qs, urlsplit
 
-from .pipeline import RATE, WINDOW, STEP
+from .pipeline import RATE
 
 _metadata = {}
 _resolution_lock = asyncio.Lock()
@@ -43,6 +43,7 @@ class YoutubeAudio:
         self.pending = b""
         self.eof = False
         self.received = 0
+        self.step = 10 * RATE
 
     @classmethod
     async def open(cls, url: str, position: float):
@@ -96,7 +97,7 @@ class YoutubeAudio:
         media = urlsplit(info.get("url", ""))
         if media.scheme != "https" or not (media.hostname or "").endswith(".googlevideo.com") or media.port not in (None, 443) or media.username:
             raise ValueError("YouTube returned an unsupported audio source")
-        base = math.floor(position / 7) * 7
+        base = math.floor(position / 10) * 10
         headers = info.get("http_headers", {})
         agent = headers.get("User-Agent", "Mozilla/5.0")
         if "\r" in agent or "\n" in agent:
@@ -120,7 +121,7 @@ class YoutubeAudio:
         return audio
 
     async def next(self):
-        wanted = WINDOW * 2 - len(self.pending)
+        wanted = (self.step + RATE) * 2 - len(self.pending)
         try:
             block = await asyncio.wait_for(self.process.stdout.readexactly(wanted), 40)
         except asyncio.IncompleteReadError as error:
@@ -134,7 +135,8 @@ class YoutubeAudio:
         if self.eof and self.base + self.received / (RATE * 2) < self.duration - 2:
             raise ValueError('Audio stream ended before the video. Check network access and any proxy or SSH tunnel')
         result = self.pending
-        self.pending = b"" if self.eof else result[STEP * 2:]
+        self.pending = b"" if self.eof else result[self.step * 2:]
+        self.step = 20 * RATE
         return result, self.eof
 
     async def close(self):

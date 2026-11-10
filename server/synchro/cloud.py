@@ -1,9 +1,16 @@
 """Fixed-endpoint cloud translation; credentials belong to one playback session."""
+import asyncio
+import logging
+import time
+import uuid
 from typing import Literal
 from urllib.parse import urlsplit
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
+from .usage import record_usage
+
+logger = logging.getLogger('uvicorn.error')
 
 PROVIDERS = {
     'openai': ('OpenAI', 'https://api.openai.com/v1/chat/completions', 'gpt-4.1-mini'),
@@ -15,11 +22,15 @@ PROVIDERS = {
 class TranslationSettings(BaseModel):
     model_config = ConfigDict(extra='forbid')
     provider: Literal['local', 'openai', 'kilo', 'openrouter'] = 'local'
+    mode: Literal['local', 'cloud_translation', 'cloud_all'] | None = None
     model: str = Field(default='', max_length=128, pattern=r'^[A-Za-z0-9_./:@+\-]*$')
     api_key: SecretStr = Field(default_factory=lambda: SecretStr(''))
 
     @model_validator(mode='after')
     def validate_key(self):
+        self.mode = self.mode or ('local' if self.provider == 'local' else 'cloud_translation')
+        if (self.mode == 'local') != (self.provider == 'local'):
+            raise ValueError('Select a cloud provider for a cloud mode, or Local server for local mode')
         if '://' in self.model:
             raise ValueError('Use a model ID, not a URL')
         if self.provider != 'local':
@@ -42,8 +53,10 @@ def api_route(endpoint, tunnel_port=0):
     extensions = {}
     if tunnel_port:
         target = urlsplit(endpoint)
-        endpoint = f'https://127.0.0.1:{tunnel_port}{target.path}'
+        endpoint = f'https://127.0.0.1:{tunnel_port}{target.path}' + ('?' + target.query if target.query else '')
         headers['Host'] = target.hostname
+        # Different TLS hosts can share a tunnel port; httpx pools by loopback origin.
+        headers['Connection'] = 'close'
         extensions['sni_hostname'] = target.hostname
     return endpoint, headers, extensions
 
@@ -55,28 +68,79 @@ def provider_error(provider, status):
     return ValueError(f'{name}: HTTP {status}; {hint}')
 
 
-async def complete(client, settings, messages, schema=None, tunnel_port=0):
+async def complete(client, settings, messages, schema=None, tunnel_port=0, stage='translation'):
     name, endpoint, _ = PROVIDERS[settings.provider]
     endpoint, headers, extensions = api_route(endpoint, tunnel_port)
     headers['Authorization'] = 'Bearer ' + settings.api_key.get_secret_value()
     body = {'model': settings.model, 'messages': messages, 'stream': False, 'temperature': 0}
-    body['max_completion_tokens' if settings.provider == 'openai' else 'max_tokens'] = 256
+    token_field = 'max_completion_tokens' if settings.provider == 'openai' else 'max_tokens'
+    body[token_field] = 512
     if settings.provider == 'openai':
         body['store'] = False
     if schema is not None:
         body['response_format'] = {'type': 'json_schema', 'json_schema': {'name': 'translation', 'strict': True, 'schema': schema}}
+    reference = uuid.uuid4().hex[:12]
+    failure = f'{name} is unreachable or timed out'
     try:
-        response = await client.post(endpoint, json=body, headers=headers, extensions=extensions, timeout=60)
-    except httpx.HTTPError:
-        raise ValueError(f'{name} is unreachable or timed out') from None
-    if response.status_code != 200:
-        raise provider_error(settings.provider, response.status_code)
-    try:
-        data = response.json()
-        choice = data['choices'][0]
-        result = choice['message']['content']
-        if not isinstance(result, str) or not result.strip() or choice.get('finish_reason') in ('length', 'content_filter'):
-            raise ValueError()
-        return result.strip()
-    except (KeyError, IndexError, TypeError, ValueError):
-        raise ValueError(f'{name} returned an empty, truncated, or invalid translation') from None
+        async with asyncio.timeout(60):
+            for attempt in range(2):
+                started = time.monotonic()
+                status, finish, tokens, reasoning = None, None, None, None
+                retry = True
+                outcome = 'network_error'
+                try:
+                    response = await client.post(endpoint, json=body, headers=headers, extensions=extensions, timeout=30)
+                    try:
+                        record_usage(stage, response.json().get('usage'))
+                    except (ValueError, AttributeError):
+                        record_usage(stage)
+                    status = response.status_code
+                    if status != 200:
+                        failure = str(provider_error(settings.provider, status))
+                        outcome = 'http_error'
+                        retry = status in (502, 503, 504)
+                    else:
+                        outcome = 'invalid_response'
+                        try:
+                            data = response.json()
+                            choice = data['choices'][0]
+                            result = choice['message']['content']
+                            reason = choice.get('finish_reason')
+                            finish = reason if reason in ('stop', 'length', 'content_filter', 'tool_calls', 'error') else 'other'
+                            usage = data.get('usage') or {}
+                            tokens = usage.get('completion_tokens')
+                            reasoning = (usage.get('completion_tokens_details') or {}).get('reasoning_tokens')
+                            tokens = tokens if type(tokens) is int else None
+                            reasoning = reasoning if type(reasoning) is int else None
+                            if reason == 'length':
+                                outcome = 'output_limit'
+                                body[token_field] = 1024
+                            elif reason == 'content_filter':
+                                outcome, retry = 'content_filter', False
+                            elif not isinstance(result, str) or not result.strip():
+                                outcome = 'empty_response'
+                            elif reason in (None, 'stop'):
+                                outcome = 'ok'
+                        except (KeyError, IndexError, TypeError, ValueError, AttributeError):
+                            pass
+                        failure = f'{name}: ' + {
+                            'output_limit': 'translation exceeded the output token limit',
+                            'content_filter': 'translation was blocked by the provider content filter',
+                            'empty_response': 'provider returned an empty translation',
+                        }.get(outcome, 'provider returned an invalid translation')
+                except httpx.HTTPError as error:
+                    record_usage(stage)
+                    failure = f'{name} is unreachable or timed out'
+                    outcome = type(error).__name__
+                # Never log credentials, response bodies, transcripts, or reasoning text.
+                logger.info('cloud_translation ref=%s provider=%s model=%s attempt=%d status=%s outcome=%s finish=%s tokens=%s reasoning_tokens=%s seconds=%.3f',
+                            reference, settings.provider, settings.model, attempt + 1, status, outcome, finish, tokens, reasoning, time.monotonic() - started)
+                if outcome == 'ok':
+                    return result.strip()
+                if not retry or attempt == 1:
+                    break
+                await asyncio.sleep(.5)
+    except TimeoutError:
+        failure = f'{name}: translation timed out after 60 seconds'
+        logger.warning('cloud_translation ref=%s provider=%s model=%s outcome=deadline', reference, settings.provider, settings.model)
+    raise ValueError(f'{failure}. Retry translation. Reference: {reference}') from None

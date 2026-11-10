@@ -96,6 +96,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
       const config = await chrome.storage.local.get(['token', 'delay', 'voice', 'apiBase', 'translation']);
       config.apiBase = serverBase(config.apiBase);
       const tab = await chrome.tabs.get(state.sourceTab);
+      if (message.type === 'youtube-seek') await chrome.storage.session.set({captureActive: true});
       const result = await chrome.runtime.sendMessage({target: 'offscreen', type: message.type === 'youtube-seek' ? 'youtube-start' : message.type,
         config, url: tab.url, position: message.position, revision: message.revision});
       if (message.type === 'youtube-stop') await chrome.storage.session.set({captureActive: false});

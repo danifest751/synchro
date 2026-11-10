@@ -15,6 +15,7 @@ The owner key is configured directly. Guest keys are matched against SHA-256 has
 | `GET /health` | Unauthenticated service name, version, `max_sessions` |
 | `GET /api/check` | Validate credentials; returns `ok`, client name, `max_sessions` |
 | `POST /api/translation/check` | Test selected local/cloud text translator; returns translation and elapsed seconds |
+| `POST /api/pipeline/check` | Test recognition, translation and voice; body matches `SessionRequest`; returns elapsed seconds and provider-reported usage |
 | `POST /api/translation/models` | Fetch filtered Kilo/OpenRouter models and per-token prices; body `{"provider":"kilo"}`; no provider key needed |
 | `POST /api/translation/balance` | Read personal account balance; body is a cloud `translation` object with the provider key |
 | `POST /api/video` | Create a native-YouTube session and warm up models |
@@ -34,7 +35,9 @@ The owner key is configured directly. Guest keys are matched against SHA-256 has
 }
 ```
 
-Session creation optionally accepts a `translation` object: `{"provider":"kilo","model":"tencent/hy-mt2-1.8b","api_key":"YOUR_PRIVATE_PROVIDER_KEY"}`. Supported providers are `local` (default), `openai`, `kilo`, and `openrouter`. Model IDs are limited to 128 characters and fixed provider URLs are used. The key is never included in a session response. Send the same object directly as the body of `POST /api/translation/check`. Model-validation failures return a sanitized message rather than echoing a submitted key.
+Session creation optionally accepts a `translation` object: `{"provider":"kilo","mode":"cloud_all","model":"tencent/hy-mt2-1.8b","api_key":"YOUR_PRIVATE_PROVIDER_KEY"}`. Modes are `local`, `cloud_translation`, and `cloud_all`. Omitting mode preserves legacy behavior: local for the local provider, cloud translation only otherwise. Local mode requires the local provider; cloud modes require a cloud provider. The same provider key covers cloud audio. Supported providers are `local` (default), `openai`, `kilo`, and `openrouter`. Model IDs are limited to 128 characters and fixed provider URLs are used. The key is never included in a session response. Send the same object directly as the body of `POST /api/translation/check`. Model-validation failures return a sanitized message rather than echoing a submitted key.
+
+Window and status responses also include `cloud_usage`, with cumulative `stages`, `reported_cost_usd`, and `unpriced_requests`. Each stage counts requests and reported cost without retaining transcripts. Warmup, failures and retries are included when their responses contain usage. Missing monetary cost is not assumed zero; see [cost limitations](CLOUD.md).
 
 `url` is a validated HTTPS YouTube video URL, at most 2048 characters. `position` is a finite nonnegative number in seconds and must precede the end of the video. `voice` is `female` (Xenia), `male` (Aidar), or `male-eugene` (Eugene). Only recorded public videos are supported.
 
@@ -100,4 +103,6 @@ FastAPI errors usually return `{"detail":"message"}`; request-validation errors 
 | 502 | YouTube, inference, or audio processing failed |
 | 503 | Capacity full, key registry unavailable, or model warmup failed |
 
-The gateway model client timeout is 90 seconds. Session creation has a 105-second budget. Reverse proxies should allow at least 120 seconds for response headers. Warm models and preload weights before accepting viewers.
+The gateway model client timeout is 90 seconds. Session creation and each audio window have a 105-second total budget; an expired window returns 504 without advancing its committed frontier. Reverse proxies should allow at least 120 seconds for response headers. Warm models and preload weights before accepting viewers.
+
+YouTube `/next` commits ten seconds on its first non-final response and twenty seconds afterward, with a one-second recognition overlap. Capture `/chunk` keeps the window and step sizes returned by `/api/session`. Do not blindly retry `/next` after losing its response: it is not idempotent and another call reads another audio window. Cloud-only retries happen inside the current window before it is committed.

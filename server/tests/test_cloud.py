@@ -19,7 +19,7 @@ class CloudTests(unittest.IsolatedAsyncioTestCase):
                     body = json.loads(request.content)
                     self.assertEqual(body['model'], 'test-model')
                     self.assertEqual(body['response_format']['type'], 'json_schema')
-                    self.assertEqual(body['max_completion_tokens' if provider == 'openai' else 'max_tokens'], 256)
+                    self.assertEqual(body['max_completion_tokens' if provider == 'openai' else 'max_tokens'], 512)
                     if provider == 'openai':
                         self.assertIs(body['store'], False)
                     return httpx.Response(200, json={'choices': [{'message': {'content': '{"translation":"Привет"}'}, 'finish_reason': 'stop'}]})
@@ -31,19 +31,22 @@ class CloudTests(unittest.IsolatedAsyncioTestCase):
                 finally:
                     await pipeline.client.aclose()
 
-    async def test_hymt_uses_plain_text_and_prepares_only_unsafe_speech_locally(self):
+    async def test_hymt_prepares_unsafe_speech_with_the_same_cloud_provider(self):
         settings = TranslationSettings(provider='kilo', api_key='private-test-api-key-123')
         seen = []
         def respond(request):
             body = json.loads(request.content)
             seen.append(str(request.url))
-            if request.url.host == 'ai-gateway.kilo.ai':
+            self.assertEqual(request.url.host, 'ai-gateway.kilo.ai')
+            self.assertEqual(request.headers['Authorization'], 'Bearer private-test-api-key-123')
+            if body['model'] == settings.model:
                 self.assertNotIn('response_format', body)
                 self.assertEqual(len(body['messages']), 1)
                 self.assertNotIn('current_text', body['messages'][0]['content'])
                 text = 'ChatGPT за 80 лет.'
             else:
-                self.assertNotIn('Authorization', request.headers)
+                self.assertEqual(body['model'], 'google/gemma-4-26b-a4b-it')
+                self.assertIn('response_format', body)
                 text = json.dumps({'translation': 'Чат джипити за восемьдесят лет.'})
             return httpx.Response(200, json={'choices': [{'message': {'content': text}}]})
         pipeline = Pipeline('http://speech', 'http://local', api='llama', silero_url='http://silero')
@@ -52,7 +55,7 @@ class CloudTests(unittest.IsolatedAsyncioTestCase):
         try:
             result = await pipeline.translate('ChatGPT in 80 years.', [], 4, translation=settings)
             self.assertEqual(result, 'Чат джипити за восемьдесят лет.')
-            self.assertEqual(seen, [PROVIDERS['kilo'][1], 'http://local/v1/chat/completions'])
+            self.assertEqual(seen, [PROVIDERS['kilo'][1], PROVIDERS['kilo'][1]])
         finally:
             await pipeline.client.aclose()
 
@@ -80,6 +83,7 @@ class CloudTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(str(request.url), f'https://127.0.0.1:{port}{target.path}')
                 self.assertEqual(request.headers['Host'], target.hostname)
                 self.assertEqual(request.extensions['sni_hostname'], target.hostname)
+                self.assertEqual(request.headers['Connection'], 'close')
                 return httpx.Response(200, json={'choices': [{'message': {'content': 'translation'}}]})
             async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
                 self.assertEqual(await complete(client, settings, [], tunnel_port=port), 'translation')
@@ -91,3 +95,51 @@ class CloudTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(ValueError):
                 TranslationSettings(**data)
         self.assertEqual(TranslationSettings(api_key='should-be-discarded').api_key.get_secret_value(), '')
+
+    async def test_transient_failures_retry_without_retranscribing_or_changing_provider(self):
+        settings = TranslationSettings(provider='kilo', api_key='private-test-api-key-123')
+        failures = [httpx.RemoteProtocolError('private-test-api-key-123'),
+                    httpx.Response(503), httpx.Response(200, json={'choices': [{'message': {'content': None}}]}),
+                    httpx.Response(200, json={'error': 'private-test-api-key-123'})]
+        for failure in failures:
+            calls = []
+            def respond(request):
+                calls.append(request)
+                if len(calls) == 1:
+                    if isinstance(failure, Exception):
+                        raise failure
+                    return failure
+                return httpx.Response(200, json={'choices': [{'message': {'content': 'Готово'}, 'finish_reason': 'stop'}]})
+            with patch('synchro.cloud.asyncio.sleep', new=AsyncMock()):
+                async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+                    self.assertEqual(await complete(client, settings, []), 'Готово')
+            self.assertEqual(len(calls), 2)
+            self.assertEqual(calls[0].url, calls[1].url)
+
+    async def test_output_limit_retries_with_more_tokens_and_logs_no_private_content(self):
+        settings = TranslationSettings(provider='kilo', api_key='private-test-api-key-123')
+        budgets = []
+        def respond(request):
+            budgets.append(json.loads(request.content)['max_tokens'])
+            return httpx.Response(200, json={'choices': [{'message': {'content': '', 'reasoning': 'private-reasoning'}, 'finish_reason': 'length'}],
+                'usage': {'completion_tokens': 512, 'completion_tokens_details': {'reasoning_tokens': 512}}})
+        with self.assertLogs('uvicorn.error', level='INFO') as logs, patch('synchro.cloud.asyncio.sleep', new=AsyncMock()):
+            async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+                with self.assertRaisesRegex(ValueError, 'output token limit.*Reference:'):
+                    await complete(client, settings, [{'role': 'user', 'content': 'private-transcript'}])
+        self.assertEqual(budgets, [512, 1024])
+        logged = '\n'.join(logs.output)
+        self.assertIn('outcome=output_limit', logged)
+        self.assertIn('reasoning_tokens=512', logged)
+        for private in ['private-test-api-key-123', 'private-reasoning', 'private-transcript']:
+            self.assertNotIn(private, logged)
+
+    async def test_permanent_errors_and_content_filter_are_not_retried(self):
+        settings = TranslationSettings(provider='kilo', api_key='private-test-api-key-123')
+        for response in [httpx.Response(status) for status in [400, 401, 402, 403, 429]] + [
+            httpx.Response(200, json={'choices': [{'message': {'content': ''}, 'finish_reason': 'content_filter'}]})]:
+            respond = AsyncMock(return_value=response)
+            async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+                with self.assertRaises(ValueError):
+                    await complete(client, settings, [])
+            self.assertEqual(respond.await_count, 1)

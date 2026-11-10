@@ -44,7 +44,7 @@ test('connection tokens can only be sent to the two Synchro endpoints', () => {
 });
 
 test('local mode discards cloud keys and cloud settings validate provider and credentials', () => {
-  assert.deepEqual(translationSettings({provider: 'local', api_key: 'private-cloud-api-key-123'}), {provider: 'local'});
+  assert.deepEqual(translationSettings({provider: 'local', api_key: 'private-cloud-api-key-123'}), {provider: 'local', mode: 'local'});
   assert.equal(translationSettings({provider: 'kilo', api_key: 'private-cloud-api-key-123'}).model, 'tencent/hy-mt2-1.8b');
   for (const value of [{provider: 'unknown'}, {provider: 'openai', api_key: 'short'}, {provider: 'kilo', model: 'bad model', api_key: 'private-cloud-api-key-123'}]) {
     assert.throws(() => translationSettings(value));

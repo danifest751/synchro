@@ -182,6 +182,18 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
             await FakePipeline().process(session, b"\0\0" * 128000, 10, False)
         self.assertEqual(session.offset, 0)
 
+    async def test_youtube_starts_with_ten_seconds_then_commits_twenty(self):
+        pipeline = FakePipeline()
+        session = Session('adaptive')
+        # Keep the boundary words: the second word belongs to this larger window.
+        with patch('synchro.pipeline.fit_wav', new=AsyncMock(side_effect=lambda audio, seconds: audio)):
+            first = await pipeline.process(session, b'\0\1' * 11 * 16000, 0, False, step=10 * 16000)
+            self.assertEqual(first['ready_until'], 10)
+            self.assertEqual(first['segments'][0]['source'], 'Hello world')
+            second = await pipeline.process(session, b'\0\1' * 21 * 16000, 10 * 16000, False, step=20 * 16000)
+            self.assertEqual(second['ready_until'], 30)
+            self.assertAlmostEqual(second['segments'][0]['start'], 10.2)
+
     async def test_inference_failure_does_not_commit(self):
         pipeline = FakePipeline()
         async def broken(*args, **kwargs):

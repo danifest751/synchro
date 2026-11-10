@@ -28,7 +28,9 @@ The extension uses Manifest V3, activeTab, tabCapture, offscreen, storage, scrip
 
 `server/synchro/pipeline.py` recognizes speech, translates text, synthesizes speech, joins WAV parts, normalizes loudness, and adjusts tempo. The translation API supports llama.cpp's OpenAI-compatible endpoint or Ollama's native endpoint; it requires structured JSON output.
 
-`server/synchro/cloud.py` adds fixed-endpoint OpenAI, Kilo Gateway, and OpenRouter calls. Credentials and model selections belong to a session, not global pipeline state. HY-MT2 uses plain-text translation and optional local speech preparation; general instruction models use validated structured output. See [cloud behavior](CLOUD.md).
+`server/synchro/cloud.py` adds fixed-endpoint OpenAI, Kilo Gateway, and OpenRouter calls. Credentials and model selections belong to a session, not global pipeline state. HY-MT2 uses plain-text translation and optional cloud speech preparation through the same provider; general instruction models use validated structured output. See [cloud behavior](CLOUD.md).
+
+`server/synchro/cloud_speech.py` handles full-cloud ASR and speech using the same provider key and server tunnel, without local AI fallback. Router speech streams are bounded, assembled into PCM/WAV and checked against the requested text. `server/synchro/usage.py` aggregates request-local, per-stage provider-reported costs and missing-price counts; it retains no content. Cloud ASR without timestamps uses committed audio only and window-level alignment.
 
 `server/synchro/catalog.py` fetches compatible public model catalogs and per-token prices through the same configured server routes, caching only that public metadata for five minutes. Personal balance requests are authenticated separately with the submitted key and never placed in the shared cache. Responses contain only the remaining USD balance and fetch time, with `Cache-Control: no-store`.
 
@@ -36,7 +38,7 @@ The extension uses Manifest V3, activeTab, tabCapture, offscreen, storage, scrip
 
 ## Audio windows and timing
 
-Input is mono, little-endian PCM16 at 16 kHz. Recognition uses eight-second windows with one second of overlap. A non-final window commits seven seconds; the final window commits its actual length. Word ownership is determined by the midpoint of each word's timestamps, preventing duplicate overlap words.
+Input is mono, little-endian PCM16 at 16 kHz. YouTube audio starts with an 11-second recognition window committing ten seconds, then uses 21-second windows committing twenty seconds. All windows overlap by one second. The player starts once ten seconds are translated (or the shorter remaining video finishes). Capture mode retains eight-second windows committing seven seconds. A final window commits its actual length. Word ownership is determined by the midpoint of each word's timestamps, preventing duplicate overlap words. Longer YouTube windows provide more translation context and fewer API round trips, but individual requests and voiceover intervals are longer.
 
 GigaAM character timestamps are grouped into words. If GigaAM fails or returns Cyrillic in an English transcription, the gateway rechecks that window with Whisper. This check does not detect every recognition error.
 

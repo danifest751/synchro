@@ -41,7 +41,7 @@ export function createModelPicker({provider, model, settings, request}) {
     const cost = estimateMinute(selected);
     estimate.textContent = cost ? `Approx. ${money(cost.minute)} / min · ${money(cost.hour)} / hour` : 'Estimated cost: unavailable for this model';
     find('modelRates').textContent = cost ? `Input ${money(selected.input_price * 1e6)} / 1M tokens · Output ${money(selected.output_price * 1e6)} / 1M tokens` : '';
-    assumptions.textContent = cost ? `Estimate: about ${cost.inputTokens.toLocaleString('en-US')} input + ${cost.outputTokens} output tokens per minute of speech. Text translation only; retries, extra reasoning, cache discounts and local ASR / voices are excluded. Actual usage varies.` : 'Select a model with published token prices to see an approximate text-translation cost. Unknown pricing is not treated as free.';
+    assumptions.textContent = cost ? `Estimate: about ${cost.inputTokens.toLocaleString('en-US')} input + ${cost.outputTokens} output tokens per minute of speech. Text translation only; ASR, voices, speech preparation, retries, extra reasoning and cache discounts are excluded. Actual usage varies.` : 'Select a model with published token prices to see an approximate text-translation cost. Unknown pricing is not treated as free.';
     renderList();
   }
 

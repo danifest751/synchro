@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager, suppress
 import hashlib
 import hmac
 import json
+import logging
 import os
 from pathlib import Path
 import re
@@ -21,6 +22,7 @@ from .pipeline import Pipeline, Session, WINDOW
 from .youtube import YoutubeAudio, youtube_url
 from .cloud import TranslationSettings
 from .catalog import CatalogRequest, ProviderCatalog
+from .usage import collect_usage, usage_summary
 
 TOKEN = os.environ.get('SYNCHRO_TOKEN', '')
 ORIGIN = os.environ.get('SYNCHRO_ORIGIN', '')
@@ -149,7 +151,7 @@ async def reserve(owner, voice, translation=None):
 
 @app.get('/health')
 async def health():
-    return {'service': 'synchro', 'version': '0.4.1', 'max_sessions': MAX_SESSIONS}
+    return {'service': 'synchro', 'version': '0.4.2', 'max_sessions': MAX_SESSIONS}
 
 
 @app.get('/api/check')
@@ -168,8 +170,9 @@ async def start(body: SessionRequest | None = None, voice: Literal['female', 'ma
     current = await reserve(owner, selected.voice, selected.translation)
     try:
         async with current.lock, asyncio.timeout(105), warmup_lock:
-            await pipeline.warmup(current.voice, current.translation)
-            current.touched = time.monotonic()
+            with collect_usage(current.usage):
+                await pipeline.warmup(current.voice, current.translation)
+                current.touched = time.monotonic()
     except Exception as error:
         await discard(current)
         raise HTTPException(503, str(error) if isinstance(error, ValueError) else 'Could not warm up models. Check the server services')
@@ -197,10 +200,16 @@ async def chunk(session_id: str, request: Request, owner=Depends(authenticate)):
         raise HTTPException(409, 'The previous window is still processing')
     async with current.lock:
         try:
-            return await pipeline.process(current, bytes(body), offset, final)
+            async with asyncio.timeout(105):
+                with collect_usage(current.usage):
+                    result = await pipeline.process(current, bytes(body), offset, final)
+                return {**result, 'cloud_usage': usage_summary(current.usage)}
         except ValueError as error:
             current.failed = True
             raise HTTPException(422, str(error))
+        except TimeoutError:
+            current.failed = True
+            raise HTTPException(504, 'Audio translation timed out after 105 seconds; retry translation')
         except Exception:
             current.failed = True
             raise HTTPException(502, 'Local model error; start a new session')
@@ -230,7 +239,8 @@ async def start_video(body: VideoRequest, owner=Depends(authenticate)):
         async with current.lock, asyncio.timeout(105):
             current.audio = await YoutubeAudio.open(url, body.position)
             async with warmup_lock:
-                await pipeline.warmup(body.voice, current.translation)
+                with collect_usage(current.usage):
+                    await pipeline.warmup(body.voice, current.translation)
             current.offset = round(current.audio.base * 16000)
             current.touched = time.monotonic()
     except Exception as error:
@@ -242,14 +252,34 @@ async def start_video(body: VideoRequest, owner=Depends(authenticate)):
 @app.post('/api/translation/check')
 async def check_translation(body: TranslationSettings, owner=Depends(authenticate)):
     started = time.monotonic()
+    usage = {}
     try:
-        text = await pipeline.translate('She decided to sleep on it and give me an answer in the morning.', [], 6, translation=body)
+        with collect_usage(usage):
+            text = await pipeline.translate('She decided to sleep on it and give me an answer in the morning.', [], 6, translation=body)
     except ValueError as error:
         raise HTTPException(502, str(error))
     except Exception:
         raise HTTPException(502, 'Translation check failed; check the model service')
     return {'ok': True, 'provider': body.provider, 'model': body.model, 'translation': text,
-            'seconds': round(time.monotonic() - started, 3)}
+            'seconds': round(time.monotonic() - started, 3), 'cloud_usage': usage_summary(usage)}
+
+
+@app.post('/api/pipeline/check')
+async def check_pipeline(body: SessionRequest, owner=Depends(authenticate)):
+    started, usage = time.monotonic(), {}
+    try:
+        async with asyncio.timeout(105), warmup_lock:
+            with collect_usage(usage):
+                await pipeline.warmup(body.voice, body.translation)
+    except ValueError as error:
+        raise HTTPException(502, str(error))
+    except TimeoutError:
+        raise HTTPException(504, 'Pipeline test timed out')
+    except Exception:
+        raise HTTPException(502, 'Pipeline test failed; check inference services')
+    return {'ok': True, 'provider': body.translation.provider, 'mode': body.translation.mode,
+            'translation': 'Recognition, translation and speech are available',
+            'seconds': round(time.monotonic() - started, 3), 'cloud_usage': usage_summary(usage)}
 
 
 @app.post('/api/translation/models')
@@ -274,7 +304,7 @@ async def translation_balance(body: TranslationSettings, owner=Depends(authentic
 async def video_status(session_id: str, owner=Depends(authenticate)):
     current = owned(session_id, owner)
     current.touched = time.monotonic()
-    return {'ready_until': current.offset / 16000, 'finished': current.finished}
+    return {'ready_until': current.offset / 16000, 'finished': current.finished, 'cloud_usage': usage_summary(current.usage)}
 
 
 @app.post('/api/video/{session_id}/next')
@@ -286,13 +316,22 @@ async def video_next(session_id: str, owner=Depends(authenticate)):
         raise HTTPException(409, 'The previous phrase is still processing')
     async with current.lock:
         try:
-            pcm, final = await current.audio.next()
-            if not pcm:
-                current.finished = True
-                return {'session_id': current.id, 'segments': [], 'ready_until': current.offset / 16000, 'finished': True}
-            return await pipeline.process(current, pcm, current.offset, final)
+            async with asyncio.timeout(105):
+                step = current.audio.step
+                pcm, final = await current.audio.next()
+                if not pcm:
+                    current.finished = True
+                    return {'session_id': current.id, 'segments': [], 'ready_until': current.offset / 16000, 'finished': True}
+                with collect_usage(current.usage):
+                    result = await pipeline.process(current, pcm, current.offset, final, step=step)
+                return {**result, 'cloud_usage': usage_summary(current.usage)}
+        except TimeoutError:
+            current.failed = True
+            logging.getLogger('uvicorn.error').warning('video_translation outcome=deadline offset_seconds=%.1f provider=%s model=%s', current.offset / 16000, current.translation.provider, current.translation.model)
+            raise HTTPException(504, 'Audio translation timed out after 105 seconds; retry translation')
         except Exception as error:
             current.failed = True
+            logging.getLogger('uvicorn.error').warning('video_translation outcome=failed offset_seconds=%.1f provider=%s model=%s error_type=%s', current.offset / 16000, current.translation.provider, current.translation.model, type(error).__name__)
             raise HTTPException(502, str(error) if isinstance(error, ValueError) else 'Audio stream translation failed')
         finally:
             current.touched = time.monotonic()

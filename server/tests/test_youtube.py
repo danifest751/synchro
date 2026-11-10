@@ -20,15 +20,18 @@ class YoutubeTests(unittest.IsolatedAsyncioTestCase):
             stdout = asyncio.StreamReader()
             async def wait(self):
                 return 0
-        pcm = b'\0\1' * (11 * 16000)
+        pcm = b'\0\1' * (35 * 16000)
         Process.stdout.feed_data(pcm)
         Process.stdout.feed_eof()
-        audio = YoutubeAudio(Process(), asyncio.create_task(asyncio.sleep(0)), 11, 0)
+        audio = YoutubeAudio(Process(), asyncio.create_task(asyncio.sleep(0)), 35, 0)
         first, final = await audio.next()
-        self.assertEqual(first, pcm[:256000])
+        self.assertEqual(first, pcm[:11 * 32000])
+        self.assertFalse(final)
+        middle, final = await audio.next()
+        self.assertEqual(middle, pcm[10 * 32000:31 * 32000])
         self.assertFalse(final)
         last, final = await audio.next()
-        self.assertEqual(last, pcm[224000:])
+        self.assertEqual(last, pcm[30 * 32000:])
         self.assertTrue(final)
         await audio.close()
 

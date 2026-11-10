@@ -115,3 +115,16 @@ class AccessTests(unittest.IsolatedAsyncioTestCase):
             wrong['Origin']='https://untrusted.example'
             response=await self.client.post('/api/translation/'+path,json=body,headers=wrong)
             self.assertEqual(response.status_code,403)
+
+    async def test_video_deadline_releases_lock_and_keeps_frontier(self):
+        from types import SimpleNamespace
+        current = await api.reserve('alice', 'female')
+        current.audio = SimpleNamespace(step=160000, next=AsyncMock(return_value=(b'pcm', False)), close=AsyncMock())
+        with patch.object(api.pipeline, 'process', new=AsyncMock(side_effect=TimeoutError)):
+            response = await self.client.post('/api/video/' + current.id + '/next', headers=self.headers('alice'))
+        self.assertEqual(response.status_code, 504)
+        self.assertTrue(current.failed)
+        self.assertFalse(current.lock.locked())
+        self.assertEqual(current.offset, 0)
+        deleted = await self.client.delete('/api/session/' + current.id, headers=self.headers('alice'))
+        self.assertEqual(deleted.status_code, 204)

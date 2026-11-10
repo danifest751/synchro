@@ -13,7 +13,7 @@ You need either a running Synchro server or a personal connection from its opera
 
 Keep the extension directory in place. A personal connection contains an access key: do not publish it or share it with another person. Server operators should issue one key per viewer.
 
-For optional cloud text translation, choose OpenAI, Kilo Gateway, or OpenRouter in **Text translation**, enter your provider key and model, and use **Test translator**. Save settings before starting playback. ASR and voices remain local; see [cloud translation](CLOUD.md) for data flow and HY-MT2 requirements.
+Under **Processing**, choose Local, Cloud: text translation only, or Cloud: recognition, translation and voice. Cloud modes use one OpenAI, Kilo Gateway, or OpenRouter key. Enter your provider key and translation model, then use **Test translator** or **Test full cloud pipeline**. Save settings before starting playback. See [cloud modes](CLOUD.md) for data flow, audio charges and HY-MT2 requirements.
 
 ## Watch YouTube
 
@@ -31,7 +31,9 @@ Video is loaded by YouTube directly in your browser. Synchro's server separately
 | Play/pause | Start or pause translated playback |
 | Captions | Show or hide translated captions; off by default |
 | Settings | Select voice, adjust audio levels and picture |
-| Voice | Xenia (female), Aidar (male), Eugene (male) |
+| Voice | Local: Xenia, Aidar, Eugene; full cloud: Nova, Onyx, Echo |
+| Dismiss / Retry translation | Clear an error message or restart at the current position |
+| Cloud usage | Provider-reported USD total; hover for stage details and missing-price notes |
 | Voiceover / Original | Set the two audio levels independently |
 | Zoom / Fit / Fill | Adjust video framing; Fit resets the fit view |
 | Close | End translation and restore the source player's settings |
@@ -48,7 +50,7 @@ Captured video and synthesized audio are stored in the browser's Origin Private 
 
 Replace the files in the installed `extension/` directory, then select **Reload** on the browser's extensions page and refresh the source tab. Keep Developer mode enabled. Avoid replacing files during playback; when copying manually, copy `manifest.json` last.
 
-The optional automatic check notices a changed manifest version in that same local folder once a minute, then reloads after playback is closed. It does not fetch releases from GitHub or the server. Operators must distribute updated files separately.
+The optional automatic check notices a changed manifest version in that same local folder once a minute, then reloads after playback is closed. An optional external [GitHub updater](UPDATES.md) checks stable Releases every 15 minutes and installs verified files into that folder, preserving server endpoints and extension identity. On Windows, install its current-user schedule once with `tools/install-updater.ps1`.
 
 ## If playback fails
 

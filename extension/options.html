@@ -8,7 +8,9 @@
 <label>Initial translation buffer in seconds<input id="delay" type="number" value="20" min="10" max="40"></label>
 <label>Voiceover voice<select id="voice"><option value="female">Xenia · female</option><option value="male">Aidar · male</option><option value="male-eugene">Eugene · male</option></select></label>
 <p class="small">Applies when translation is started again.</p>
-<h2>Text translation</h2>
+<h2>Processing</h2>
+<label>Mode<select id="processingMode"><option value="local">Local · own computer or server</option><option value="cloud_translation">Cloud · text translation only</option><option value="cloud_all">Cloud · recognition, translation and voice</option></select></label>
+<p class="small" id="modeNote"></p>
 <label>Provider<select id="provider"><option value="local">Local server</option><option value="openai">OpenAI</option><option value="kilo">Kilo Gateway</option><option value="openrouter">OpenRouter</option></select></label>
 <div id="cloudSettings" hidden>
 <label>Provider API key<input id="cloudKey" type="password" spellcheck="false" autocomplete="off"></label>
@@ -20,12 +22,13 @@
 <p id="modelStatus" class="small" role="status"></p><div id="modelResults" class="model-results" role="group" aria-label="Available translation models" aria-busy="false"></div><p id="modelCount" class="small muted"></p></section>
 <label>Selected model ID<input id="cloudModel" type="text" spellcheck="false" autocomplete="off" maxlength="128"></label>
 <section id="modelPricing" class="model-pricing" aria-label="Estimated translation cost" hidden><strong id="modelEstimate"></strong><p id="modelRates" class="small"></p><p id="estimateAssumptions" class="small"></p></section>
-<p class="small">The key is stored in this browser profile and sent to your Synchro server for this playback session. Transcript text is sent to the selected cloud provider; recognition and speech stay local. API usage is billed to your account.</p>
-<p id="hyNote" class="small" hidden>HY-MT2 translates plain text. The local translation model prepares Latin names and numbers for Silero when needed; keep it available.</p></div>
+<p class="small">The key is stored in this browser profile and sent to your Synchro server for this playback session. Cloud modes use this one provider key. Full cloud mode also sends audio and generates the voice through that provider. API usage is billed to your account.</p>
+<p id="hyNote" class="small" hidden>HY-MT2 translates plain text. Cloud Gemma through the same provider prepares Latin names and numbers for Silero when needed. That extra request is billed separately; no local LLM is used.</p></div>
 <button id="testTranslation" class="secondary" type="button">Test translator</button><p id="translationStatus" class="small" role="status"></p>
 <div class="row"><button id="save">Save and test</button><span id="status" role="status"></span></div>
 <p class="small">YouTube video plays directly in its native player; the server fetches audio only. Seeking restarts translation at the selected position. Other sites use a separate player with tab recording and no fixed duration limit.</p>
 <h2>Updates</h2><label class="check"><input type="checkbox" id="autoUpdate" checked>Automatically apply updates from the extension folder</label>
 <p class="small">Checks once a minute. Updates wait until YouTube translation or the separate player is closed. Put new files in the same extension folder.</p>
+<p class="small">The optional GitHub updater checks <a href="https://github.com/danifest751/synchro/releases" target="_blank" rel="noreferrer">Synchro Releases</a> every 15 minutes and preserves this installation's server and extension identity. Install it once with <code>tools/install-updater.ps1</code> from the project. An unpacked extension cannot overwrite its own files.</p>
 <button id="checkUpdate" class="secondary">Check for updates</button><p id="updateStatus" class="small" role="status"></p>
 <p class="muted" id="origin"></p></main><script type="module" src="options.js"></script></body></html>

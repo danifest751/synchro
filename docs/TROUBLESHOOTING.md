@@ -26,7 +26,7 @@ One key permits one active session. Close the previous translation, or wait abou
 
 ## Speech starts late, pauses, or feels disconnected
 
-Check whether the original speech begins late inside the current eight-second ASR window, whether ASR missed words, and whether the translated phrase is much shorter than its source interval. Some pauses are source silence; others can be recognition/window-boundary errors. Provide a public video URL, source timestamp, expected words, and whether the issue is reproducible. Do not attach private connection files.
+Check whether original speech begins late inside the current ASR window, whether ASR missed words, and whether the translated phrase is much shorter than its source interval. YouTube now commits ten seconds first, then twenty seconds; capture mode commits seven seconds. Some pauses are source silence; others can be recognition/window-boundary errors. Provide a public video URL, source timestamp, expected words, and whether the issue is reproducible. Do not attach private connection files.
 
 The browser pauses while translation catches up and slows video for long phrases. This prototype does not yet have sentence-level boundary stabilization. GigaAM's fallback detects failures and mixed alphabets, not every semantically wrong English transcript.
 

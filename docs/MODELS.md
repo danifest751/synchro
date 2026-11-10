@@ -11,7 +11,7 @@
 
 Synchro translates **recognized text**. It does not translate video frames or perform end-to-end speech-to-speech inference. The public repository contains integration code, not weights. Download and review models separately.
 
-Version 0.4.0 also supports [optional cloud text translation](CLOUD.md). Its HY-MT2 route uses the provider's plain-text API and keeps the local model available for speech preparation when needed.
+Version 0.4.0 also supports [optional cloud text translation](CLOUD.md). Its HY-MT2 route uses the provider's plain-text API. Since 0.4.2, speech preparation uses cloud Gemma through the same provider instead of a local LLM.
 
 ## What is implemented
 

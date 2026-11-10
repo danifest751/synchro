@@ -2,11 +2,11 @@ import {serverBase} from './connection.mjs';
 import {translationSettings} from './translation.mjs';
 let current, lifecycle = Promise.resolve();
 
-async function request(state, path, method = 'GET', body, cancel = true) {
+async function request(state, path, method = 'GET', body, cancel = true, timeout = 120000) {
   const response = await fetch(serverBase(state.config.apiBase) + path, {method,
     headers: {Authorization: `Bearer ${state.config.token}`, 'Content-Type': 'application/json'},
     ...(body ? {body: JSON.stringify(body)} : {}),
-    signal: cancel ? AbortSignal.any([state.abort.signal, AbortSignal.timeout(120000)]) : AbortSignal.timeout(120000)});
+    signal: cancel ? AbortSignal.any([state.abort.signal, AbortSignal.timeout(timeout)]) : AbortSignal.timeout(timeout)});
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
     throw new Error(typeof data.detail === 'string' ? data.detail : `Server: ${response.status}`);
@@ -41,9 +41,12 @@ async function run(state) {
       }
     }
   } catch (error) {
-    if (!state.stopped) emit(state, {type: 'error', message: error.message});
+    if (!state.stopped) {
+      const status = state.id ? await request(state, `/api/video/${state.id}`, 'GET', null, true, 5000).catch(() => null) : null;
+      emit(state, {type: 'error', message: error.message, cloud_usage: status?.cloud_usage});
+    }
   } finally {
-    if (state.id) await request(state, `/api/session/${state.id}`, 'DELETE', null, false).catch(() => {});
+    if (state.id) await request(state, `/api/session/${state.id}`, 'DELETE', null, false, 10000).catch(() => {});
     if (current === state) {
       current = null;
       void chrome.runtime.sendMessage({type: 'youtube-ended'}).catch(() => {});

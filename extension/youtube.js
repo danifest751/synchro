@@ -9,9 +9,9 @@
   original.captions = nativeCaptions?.getAttribute('aria-pressed') === 'true';
   const initialUrl = location.href, position = video.currentTime;
   let closed = false, revision = 1, cues = [], ready = position, duration = video.duration, finished = false;
-  let preparing = true, wanted = false, buffering = false, internalPause = false, wasAd = false, error = '';
+  let preparing = true, wanted = false, buffering = false, internalPause = false, wasAd = false, error = '', failed = false;
   let frame, timer, seekTimer, lastReport = 0, lastTime = 0, lastClock = 0, lastMix = performance.now(), duckUntil = 0;
-  let ttsVolume = .9, originalVolume = .55, zoom = 1, fit = 'contain', captions = false;
+  let ttsVolume = .9, originalVolume = .55, zoom = 1, fit = 'contain', captions = false, cloudUsage;
   const context = new AudioContext(), gain = context.createGain();
   gain.gain.value = ttsVolume; gain.connect(context.destination);
   const sources = new Map();
@@ -48,7 +48,7 @@
     <label><span>Zoom <output id="zoomValue">100%</output></span><input id="zoom" aria-label="Video zoom" type="range" min="50" max="300" value="100"></label>
     <div class="row"><button id="fit" aria-pressed="true">Fit</button><button id="fill" aria-pressed="false">Fill</button></div>
     <p style="margin:12px 0 0;color:#a7b5ad;font-size:12px">Original audio is lowered during Russian speech. Use YouTube controls to pause and seek.</p>
-  </section><button id="start" class="start" hidden>Play with translation</button><div id="subtitle" class="subtitle" hidden><span></span></div><div id="status" class="status" role="status">Fetching audio and preparing models…</div>`;
+  </section><button id="start" class="start" hidden>Play with translation</button><div id="subtitle" class="subtitle" hidden><span></span></div><div id="status" class="status" role="status"><span id="statusText">Fetching audio and preparing models…</span> <span id="usageText"></span> <button id="retry" hidden>Retry translation</button> <button id="dismiss" aria-label="Dismiss error" hidden>Dismiss</button></div>`;
   const find = id => root.getElementById(id);
   const pictureStyle = document.createElement('style');
   pictureStyle.textContent = 'video[data-synchro-native]{width:100%!important;height:100%!important;left:0!important;top:0!important;object-fit:var(--synchro-fit,contain)!important;transform:scale(var(--synchro-zoom,1))!important;transform-origin:center!important}.html5-video-container[data-synchro-container]{width:100%!important;height:100%!important}';
@@ -83,6 +83,7 @@
   }
   async function toggle() {
     await context.resume();
+    if (failed) { wanted = true; restart(); return; }
     if (wanted) { wanted = false; video.pause(); stopAudio(); }
     else {
       wanted = true;
@@ -91,10 +92,12 @@
     }
   }
   function restart() {
-    revision++; cues = []; ready = video.currentTime; finished = false; preparing = true; error = '';
+    revision++; cues = []; ready = video.currentTime; finished = false; preparing = true; error = ''; failed = false;
+    cloudUsage = undefined; text('usageText', '');
     pauseForBuffer();
-    find('status').textContent = 'Preparing translation from the selected position…';
-    void send('youtube-seek');
+    text('statusText', 'Preparing translation from the selected position…');
+    const stamp = revision;
+    void send('youtube-seek').then(result => { if (!result?.ok && !closed && stamp === revision) showError(result?.error || 'Could not restart translation'); });
   }
   function seek() {
     if (player.classList.contains('ad-showing')) return;
@@ -109,6 +112,7 @@
   function played() {
     if (closed) return;
     wanted = true;
+    if (failed) { restart(); return; }
     if (preparing || ready - video.currentTime < .25) pauseForBuffer();
   }
   function cleanup() {
@@ -124,10 +128,17 @@
     chrome.runtime.onMessage.removeListener(receive); window.removeEventListener('pagehide', cleanup);
     pictureStyle.remove(); host.remove(); delete window.__synchroYoutube;
   }
+  function showError(message) {
+    error = message; failed = true; preparing = false; wanted = false; pauseForBuffer();
+  }
   function receive(message) {
     const event = message.event;
     if (message.type !== 'youtube-event' || !event || event.revision !== revision || closed) return;
-    if (event.type === 'error') { error = event.message; wanted = false; pauseForBuffer(); }
+    if (event.cloud_usage) {
+      cloudUsage = event.cloud_usage;
+      if (Object.keys(cloudUsage.stages || {}).length) text('usageText', `· Cloud ${cloudUsage.unpriced_requests ? '≥' : ''}$${cloudUsage.reported_cost_usd.toFixed(5)}`);
+    }
+    if (event.type === 'error') showError(event.message);
     if (event.type === 'opened') duration = event.duration;
     if (event.type === 'result') {
       ready = event.ready_until; finished = event.finished;
@@ -136,7 +147,7 @@
         const stamp = revision;
         const bytes = Uint8Array.from(atob(cue.wav), char => char.charCodeAt(0));
         delete cue.wav; cues.push(cue);
-        void context.decodeAudioData(bytes.buffer).then(buffer => { if (!closed && stamp === revision) cue.buffer = buffer; }).catch(() => { error = 'Could not decode translated speech'; });
+        void context.decodeAudioData(bytes.buffer).then(buffer => { if (!closed && stamp === revision) cue.buffer = buffer; }).catch(() => { if (!closed && stamp === revision) showError('Could not decode translated speech'); });
       }
     }
   }
@@ -146,6 +157,8 @@
   video.pause(); video.muted = false;
   if (original.captions) nativeCaptions.click();
   find('toggle').onclick = toggle; find('start').onclick = toggle; find('close').onclick = cleanup;
+  find('retry').onclick = toggle;
+  find('dismiss').onclick = () => { error = ''; };
   for (const type of ['click', 'dblclick', 'pointerdown', 'pointerup', 'mousedown', 'mouseup', 'wheel']) root.addEventListener(type, event => event.stopPropagation());
   find('settings').onclick = () => { find('panel').hidden = !find('panel').hidden; find('settings').setAttribute('aria-expanded', String(!find('panel').hidden)); };
   root.addEventListener('keydown', event => { if (event.key === 'Escape') { find('panel').hidden = true; find('settings').setAttribute('aria-expanded', 'false'); find('settings').focus(); } event.stopPropagation(); });
@@ -156,7 +169,7 @@
   find('fit').onclick = () => { fit = 'contain'; zoom = 1; applyPicture(); save(); };
   find('fill').onclick = () => { fit = 'cover'; zoom = 1; applyPicture(); save(); };
   find('voice').onchange = async event => { await chrome.storage.local.set({voice: event.target.value}); restart(); };
-  void chrome.storage.local.get(['youtubeView', 'voice', 'delay']).then(data => {
+  void chrome.storage.local.get(['youtubeView', 'voice', 'delay', 'translation']).then(data => {
     const saved = data.youtubeView || {};
     ttsVolume = Math.max(0, Math.min(1, Number(saved.ttsVolume ?? .9)));
     originalVolume = Math.max(0, Math.min(1, Number(saved.originalVolume ?? .55)));
@@ -164,6 +177,7 @@
     gain.gain.value = ttsVolume;
     for (const [name, value] of [['tts', ttsVolume], ['original', originalVolume]]) { find(name).value = String(Math.round(value * 100)); find(name + 'Value').textContent = `${Math.round(value * 100)}%`; }
     find('voice').value = ['female', 'male', 'male-eugene'].includes(data.voice) ? data.voice : 'female';
+    if (data.translation?.mode === 'cloud_all') [...find('voice').options].forEach((option, index) => { option.textContent = ['Nova · cloud female', 'Onyx · cloud male', 'Echo · cloud male'][index]; });
     host.dataset.delay = String(Number(data.delay) || 20); applyPicture();
   });
   function tick() {
@@ -176,7 +190,7 @@
     const rate = cue ? Math.max(.0625, Math.min(1, cue.source_duration / cue.duration)) : 1;
     if (Math.abs(video.playbackRate - rate) > .0001) { stopAudio(); video.playbackRate = rate; }
     if (lastClock && Math.abs((time - lastTime) / rate - (context.currentTime - lastClock)) > .18) stopAudio();
-    if (preparing && (ready - time >= Math.min(Number(host.dataset.delay) || 20, duration - time - .1) || finished && ready - time > .1)) preparing = false;
+    if (preparing && (ready - time >= Math.min(10, Number(host.dataset.delay) || 20, duration - time - .1) || finished && ready - time > .1)) preparing = false;
     if (wanted && !preparing && !error && video.paused && buffering && ready - time > .25) { buffering = false; void context.resume(); void video.play().catch(() => { wanted = false; }); }
     if (wanted && !video.paused && (ready - time < .2 && !finished || preparing)) pauseForBuffer();
     const running = wanted && !video.paused && !video.seeking && video.readyState >= 3 && !preparing && !error;
@@ -203,13 +217,19 @@
     find('subtitle').hidden = !captions || !cue;
     const subtitle = find('subtitle').firstElementChild;
     if (subtitle.textContent !== (cue?.text || '')) subtitle.textContent = cue?.text || '';
-    const label = wanted ? 'Pause' : 'Play with translation';
+    const label = failed ? 'Retry translation' : wanted ? 'Pause' : 'Play with translation';
     if (find('toggle').getAttribute('aria-label') !== label) {
       find('toggle').setAttribute('aria-label', label); find('toggle').title = label; find('toggle').innerHTML = wanted ? icons.pause : icons.play;
     }
-    find('start').hidden = preparing || error || !video.paused || wanted;
+    find('start').hidden = preparing || !video.paused || wanted || Boolean(error);
+    find('start').textContent = failed ? 'Retry translation' : 'Play with translation';
+    find('retry').hidden = !error || !failed;
+    find('dismiss').hidden = !error;
     find('status').classList.toggle('error', Boolean(error));
-    text('status', error || (preparing ? 'Preparing translation…' : buffering ? 'Waiting for the next phrase…' : `Translated to ${Math.floor(ready / 60)}:${String(Math.floor(ready % 60)).padStart(2, '0')}${rate < .99 ? ' · synchronizing a long phrase' : ''}`));
+    text('statusText', error || (failed ? 'Translation stopped · press Play to retry' : preparing ? 'Preparing translation…' : buffering ? 'Waiting for the next phrase…' : `Translated to ${Math.floor(ready / 60)}:${String(Math.floor(ready % 60)).padStart(2, '0')}${rate < .99 ? ' · synchronizing a long phrase' : ''}`));
+    if (cloudUsage?.stages && Object.keys(cloudUsage.stages).length) {
+      find('status').title = 'Provider-reported usage: ' + Object.entries(cloudUsage.stages).map(([stage, usage]) => `${stage}: $${usage.reported_cost_usd.toFixed(6)} (${usage.requests} requests)`).join(' · ') + (cloudUsage.unpriced_requests ? ' · Some requests have no reported price; total is incomplete' : ' · Provider-reported amounts may differ from final billing');
+    }
     for (const item of cues) if (item.start + item.source_duration < time - 15) { item.buffer = null; sources.delete(item.id); }
     cues = cues.filter(item => item.start + item.source_duration >= time - 30);
     frame = requestAnimationFrame(tick);
