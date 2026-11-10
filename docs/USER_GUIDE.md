@@ -38,7 +38,9 @@ Video is loaded by YouTube directly in your browser. Synchro's server separately
 | Zoom / Fit / Fill | Adjust video framing; Fit resets the fit view |
 | Close | End translation and restore the source player's settings |
 
-Original audio remains audible between phrases and is lowered while Russian speech plays. Buffering pauses the video until translation catches up. A long voiceover may temporarily reduce video speed; speech is not simply cut off at the end of its source window.
+Original audio remains audible between phrases and is lowered while Russian speech plays. Buffering pauses the video until translation catches up. Video speed adjusts within each speech phrase so its start and end follow the voiceover; pauses retain normal speed. This uses estimated recognition timestamps, so it does not promise exact lip synchronization. Speech is not simply cut off at a chunk boundary.
+
+If your operator configured [VoiceStudio](VOICES.md), the voice menus also show Female 1–3 and Male 1–3. These voices use the operator's separate speech server, including when recognition runs on your own computer. Some deployments offer them only with cloud text translation because their local translator shares GPU memory. Full cloud mode offers the cloud provider's own voices.
 
 ## Other sites: tab capture
 

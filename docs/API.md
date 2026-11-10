@@ -16,6 +16,7 @@ The owner key is configured directly. Guest keys are matched against SHA-256 has
 | `GET /api/check` | Validate credentials; returns `ok`, client name, `max_sessions` |
 | `POST /api/translation/check` | Test selected local/cloud text translator; returns translation and elapsed seconds |
 | `POST /api/pipeline/check` | Test recognition, translation and voice; body matches `SessionRequest`; returns elapsed seconds and provider-reported usage |
+| `GET /api/voices?mode=cloud_translation` | Authenticated catalog of available logical voice IDs and labels for the selected mode; optional operator note |
 | `POST /api/translation/models` | Fetch filtered Kilo/OpenRouter models and per-token prices; body `{"provider":"kilo"}`; no provider key needed |
 | `POST /api/translation/balance` | Read personal account balance; body is a cloud `translation` object with the provider key |
 | `POST /api/video` | Create a native-YouTube session and warm up models |
@@ -39,7 +40,7 @@ Session creation optionally accepts a `translation` object: `{"provider":"kilo",
 
 Window and status responses also include `cloud_usage`, with cumulative `stages`, `reported_cost_usd`, and `unpriced_requests`. Each stage counts requests and reported cost without retaining transcripts. Warmup, failures and retries are included when their responses contain usage. Missing monetary cost is not assumed zero; see [cost limitations](CLOUD.md).
 
-`url` is a validated HTTPS YouTube video URL, at most 2048 characters. `position` is a finite nonnegative number in seconds and must precede the end of the video. `voice` is `female` (Xenia), `male` (Aidar), or `male-eugene` (Eugene). Only recorded public videos are supported.
+`url` is a validated HTTPS YouTube video URL, at most 2048 characters. `position` is a finite nonnegative number in seconds and must precede the end of the video. `voice` is `female` (Xenia), `male` (Aidar), or `male-eugene` (Eugene), plus configured `studio-female-1` through `studio-female-3` and `studio-male-1` through `studio-male-3`. Query `/api/voices` for availability in the chosen mode. Full cloud mode maps the base IDs to Nova, Onyx and Echo. Private VoiceStudio profile IDs never leave the gateway. Only recorded public videos are supported.
 
 The response contains `session_id`, `base` (actual starting position), and `duration` in seconds. Fetch windows sequentially with `/next`; do not issue concurrent requests for the same session. Close the session on cancellation and start a new one after seeking or changing voices.
 

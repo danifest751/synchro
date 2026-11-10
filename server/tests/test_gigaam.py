@@ -21,7 +21,7 @@ class GigaamTests(unittest.TestCase):
             try:
                 client = HTTPConnection('127.0.0.1', server.server_port, timeout=5)
                 with patch.dict('sys.modules', {'numpy': MagicMock()}):
-                    client.request('POST', '/transcribe', body=b'\0\0' * 21 * 16000, headers={'Authorization': 'Bearer test-worker-key'})
+                    client.request('POST', '/transcribe', body=b'\0\0' * 22 * 16000, headers={'Authorization': 'Bearer test-worker-key'})
                     response = client.getresponse()
                     response_body = response.read()
                 self.assertEqual(response.status, 200, response_body)

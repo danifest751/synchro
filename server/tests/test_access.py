@@ -36,6 +36,20 @@ class AccessTests(unittest.IsolatedAsyncioTestCase):
     def headers(self, name):
         return {'Authorization': 'Bearer ' + self.keys[name], 'Origin': api.ORIGIN}
 
+    async def test_voice_catalog_is_authenticated_and_contains_no_private_profiles(self):
+        from synchro.voices import StudioVoices, STUDIO_VOICES
+        with patch.dict(os.environ, {'SYNCHRO_VOICESTUDIO_URL': 'http://private-studio',
+            'SYNCHRO_VOICESTUDIO_TOKEN': 'private-studio-key',
+            'SYNCHRO_VOICESTUDIO_VOICES': json.dumps({key: 'private-profile-' + str(index) for index, key in enumerate(STUDIO_VOICES)})}):
+            studio = StudioVoices()
+        with patch.object(api.pipeline, 'studio', studio):
+            anonymous = await self.client.get('/api/voices?mode=cloud_translation')
+            self.assertEqual(anonymous.status_code, 401)
+            response = await self.client.get('/api/voices?mode=cloud_translation', headers=self.headers('alice'))
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(len(response.json()['voices']), 9)
+            self.assertNotIn('private', response.text)
+
     async def test_clients_cannot_read_or_stop_each_others_sessions(self):
         alice = await api.reserve('alice', 'female')
         bob = await api.reserve('bob', 'male')

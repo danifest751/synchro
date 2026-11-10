@@ -5,12 +5,12 @@ export function playableUntil(videoEnd, readyUntil) {
 export function scheduleCue(cue, position) {
   const span = cue.source_duration ?? cue.duration;
   if (cue.start + span <= position) return null;
-  const rate = Math.min(1, span / cue.duration);
+  const rate = cueRate(cue);
   return {delay: Math.max(0, cue.start - position), offset: Math.max(0, position - cue.start) / rate};
 }
 
 export function cueRate(cue) {
-  return cue ? Math.min(1, (cue.source_duration ?? cue.duration) / cue.duration) : 1;
+  return cue ? Math.max(.0625, Math.min(16, (cue.source_duration ?? cue.duration) / cue.duration)) : 1;
 }
 
 export function cueAt(cues, position) {

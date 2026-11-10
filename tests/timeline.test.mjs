@@ -5,6 +5,7 @@ import {updateAction} from '../extension/updates.mjs';
 import {serverBase, PUBLIC_API, LOCAL_API, HOST_API} from '../extension/connection.mjs';
 import {translationSettings} from '../extension/translation.mjs';
 import {estimateMinute, rankedModels} from '../extension/model-picker.mjs';
+import {fillVoiceSelect} from '../extension/voice-picker.mjs';
 
 test('video cannot outrun a missing translation', () => {
   assert.equal(playableUntil(40, 7), 7);
@@ -25,6 +26,25 @@ test('long narration slows its own video interval and maps seeks to audio time',
   assert.deepEqual(scheduleCue(cue, 12), {delay: 0, offset: 4});
   assert.equal(cueAt([cue], 14), undefined);
   assert.equal(scheduleCue(cue, 14), null);
+});
+
+test('short narration follows the same start and end mapping', () => {
+  const cue = {start: 10, source_duration: 4, duration: 2};
+  assert.equal(cueRate(cue), 2);
+  assert.deepEqual(scheduleCue(cue, 12), {delay: 0, offset: 1});
+});
+
+test('voice menus retain a configured studio voice and fall back when mode changes', () => {
+  globalThis.document = {createElement: () => ({})};
+  try {
+    const select = {replaceChildren(...items) { this.items = items; }};
+    const voices = [{id: 'female', name: 'Xenia'}, {id: 'male', name: 'Aidar'}, {id: 'studio-male-2', name: 'Male 2 · VoiceStudio'}];
+    fillVoiceSelect(select, voices, 'studio-male-2');
+    assert.equal(select.value, 'studio-male-2');
+    fillVoiceSelect(select, voices.slice(0, 2), 'studio-male-2');
+    assert.equal(select.value, 'male');
+    assert.throws(() => fillVoiceSelect(select, [], 'female'));
+  } finally { delete globalThis.document; }
 });
 
 test('updating never interrupts capture or an open player', () => {

@@ -19,6 +19,9 @@ class FakePipeline(Pipeline):
     async def translate(self, *args, **kwargs):
         return "Привет"
 
+    async def align_phrases(self, *args):
+        return None
+
     async def speak(self, text, voice='female'):
         return wav_bytes(b"\0\0" * 22050, 22050)
 
@@ -69,6 +72,18 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         pipeline.client = httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200, json={'text': 'в+осемьдесят л+ёт'})))
         try:
             self.assertEqual(await pipeline.accentuate('восемьдесят лет'), 'во\u0301семьдесят ле\u0301т')
+        finally:
+            await pipeline.client.aclose()
+
+    async def test_stress_service_can_drop_punctuation_without_changing_the_spoken_text(self):
+        pipeline = Pipeline('http://speech', 'http://llm')
+        await pipeline.client.aclose()
+        pipeline.client = httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200,
+            json={'text': 'Ит+ак у мен+я теп+ерь дв+а мех+аника'})))
+        try:
+            marked = await pipeline.accentuate('Итак, у меня теперь два механика…')
+            self.assertEqual(marked.replace('\u0301', ''), 'Итак, у меня теперь два механика…')
+            self.assertIn('\u0301', marked)
         finally:
             await pipeline.client.aclose()
 
@@ -192,7 +207,7 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(first['segments'][0]['source'], 'Hello world')
             second = await pipeline.process(session, b'\0\1' * 21 * 16000, 10 * 16000, False, step=20 * 16000)
             self.assertEqual(second['ready_until'], 30)
-            self.assertAlmostEqual(second['segments'][0]['start'], 10.2)
+            self.assertAlmostEqual(second['segments'][0]['start'], 16.4)
 
     async def test_inference_failure_does_not_commit(self):
         pipeline = FakePipeline()
@@ -224,7 +239,7 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
             result = await pipeline.process(Session('long'), b'\0\1' * 128000, 0, False)
         cue = result['segments'][0]
         self.assertEqual(cue['duration'], 20)
-        self.assertAlmostEqual(cue['source_duration'], 6.8)
+        self.assertAlmostEqual(cue['source_duration'], .88)
         self.assertEqual(result['ready_until'], 7)
 
     async def test_session_gender_is_used_for_synthesis(self):

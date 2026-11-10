@@ -1,11 +1,24 @@
 import asyncio
 import unittest
 import sys
+from unittest.mock import AsyncMock, patch
 
 from synchro.youtube import YoutubeAudio, youtube_url, discard_errors
 
 
 class YoutubeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_seek_keeps_the_exact_selected_position(self):
+        from types import SimpleNamespace
+        process = SimpleNamespace(stdout=SimpleNamespace(readexactly=AsyncMock(return_value=b'\0\1' * 1600)),
+                                  stderr=asyncio.StreamReader())
+        process.stderr.feed_eof()
+        with patch('synchro.youtube.asyncio.create_subprocess_exec', new=AsyncMock(return_value=process)) as create:
+            audio = await YoutubeAudio.from_info({'url': 'https://test.googlevideo.com/audio', 'duration': 800}, 613.7, '')
+            self.assertEqual(audio.base, 613.7)
+            command = create.await_args.args
+            self.assertEqual(command[command.index('-ss') + 1], '613.7')
+            await audio.errors
+
     def test_only_canonical_video_urls_are_accepted(self):
         expected = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
         for url in [expected + '&t=15', 'https://youtu.be/dQw4w9WgXcQ', 'https://www.youtube.com/shorts/dQw4w9WgXcQ']:

@@ -1,8 +1,8 @@
 # Speech on the browser's own computer
 
-The optional host worker runs GigaAM recognition and Silero speech on the CPU of the computer running the browser. With **Cloud: text translation only**, only recognized text and its speech preparation go to the selected cloud provider. No remote recognition or voice service is used. This is different from connecting the extension to a gateway on another machine.
+The optional host worker runs GigaAM recognition and Silero speech on the CPU of the computer running the browser. With **Cloud: text translation only** and Xenia/Aidar/Eugene, only recognized text and its speech preparation go to the selected cloud provider. No remote recognition or voice service is used. This is different from connecting the extension to a gateway on another machine. Optional voices labeled **VoiceStudio · server** use the separately configured server described in [VoiceStudio setup](VOICES.md).
 
-The Windows prototype was prepared on a Ryzen 7 8745HS (8 cores / 16 threads), about 40 GB RAM, with Radeon 780M graphics. GPU acceleration is not required for this route. OmniVoice/VoiceStudio is a separate, heavier optional voice evaluation and is not silently substituted for Silero.
+The Windows prototype was prepared on a Ryzen 7 8745HS (8 cores / 16 threads), about 40 GB RAM, with Radeon 780M graphics. GPU acceleration is not required for Silero. OmniVoice/VoiceStudio is a separate optional service and is not silently substituted for Silero.
 
 ## Run from the repository
 

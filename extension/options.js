@@ -1,17 +1,32 @@
 import {serverBase} from './connection.mjs';
 import {PROVIDERS, translationSettings} from './translation.mjs';
 import {createModelPicker} from './model-picker.mjs';
+import {fillVoiceSelect} from './voice-picker.mjs';
 const token = document.querySelector('#token'), delay = document.querySelector('#delay'), status = document.querySelector('#status');
 const config = await chrome.storage.local.get(['token', 'delay', 'autoUpdate', 'voice', 'apiBase', 'translation', 'cloudProfiles']);
 const provider = document.querySelector('#provider'), cloudModel = document.querySelector('#cloudModel'), cloudKey = document.querySelector('#cloudKey');
 const profiles = config.cloudProfiles || {};
 const processingMode = document.querySelector('#processingMode');
 processingMode.value = config.translation?.mode || (config.translation?.provider && config.translation.provider !== 'local' ? 'cloud_translation' : 'local');
+let voiceRevision = 0, voicesLoaded = false;
+async function loadVoices() {
+  const stamp = ++voiceRevision;
+  try {
+    const response = await fetch(serverBase(server.value) + '/api/voices?mode=' + processingMode.value, {
+      headers: {Authorization: `Bearer ${token.value.trim() || config.token}`}, signal: AbortSignal.timeout(10000)});
+    if (!response.ok) throw new Error('Could not load voices; check the gateway version and connection');
+    const data = await response.json();
+    if (stamp === voiceRevision) {
+      fillVoiceSelect(voice, data.voices, voicesLoaded ? voice.value : config.voice);
+      voicesLoaded = true; document.querySelector('#voiceStatus').textContent = data.note || '';
+    }
+  } catch (error) { if (stamp === voiceRevision) document.querySelector('#voiceStatus').textContent = error.message; }
+}
 function showMode() {
   const allCloud = processingMode.value === 'cloud_all';
   document.querySelector('#modeNote').textContent = allCloud ? 'One provider key for cloud ASR, translation and speech. No local AI models are used. Audio is uploaded. FFmpeg and the Synchro gateway still run on your server. Cloud speech is AI-generated. Speech charges are additional to the text estimate.' : processingMode.value === 'cloud_translation' ? 'All text processing uses the selected cloud provider. Recognition and voices use your own server.' : 'Recognition, text translation and voices use your own computer or server.';
-  const labels = allCloud ? ['Nova · cloud female', 'Onyx · cloud male', 'Echo · cloud male'] : ['Xenia · female', 'Aidar · male', 'Eugene · male'];
-  [...document.querySelector('#voice').options].forEach((option, index) => { option.textContent = labels[index]; });
+  document.querySelector('#voiceStatus').textContent = '';
+  queueMicrotask(loadVoices);
   document.querySelector('#testTranslation').textContent = allCloud ? 'Test full cloud pipeline' : 'Test translator';
 }
 let modelPicker;
@@ -69,8 +84,8 @@ document.querySelector('#testTranslation').onclick = async (event) => {
   finally { button.disabled = false; void modelPicker.loadBalance(); }
 };
 const server = document.querySelector('#server'); server.value = serverBase(config.apiBase);
-const voice = document.querySelector('#voice'); voice.value = ['female', 'male', 'male-eugene'].includes(config.voice) ? config.voice : 'female';
-voice.onchange = () => chrome.storage.local.set({voice: voice.value});
+const voice = document.querySelector('#voice');
+voice.onchange = () => { voicesLoaded = true; return chrome.storage.local.set({voice: voice.value}); };
 document.querySelector('#version').textContent = `Version ${chrome.runtime.getManifest().version}`;
 const autoUpdate = document.querySelector('#autoUpdate'); autoUpdate.checked = config.autoUpdate !== false;
 autoUpdate.onchange = () => chrome.storage.local.set({autoUpdate: autoUpdate.checked});
@@ -87,6 +102,7 @@ document.querySelector('#import').onchange = async (event) => {
     server.value = serverBase(data.server_url);
     token.value = data.token; status.textContent = 'Connection imported. Click Save and test.';
     void modelPicker.setProvider();
+    void loadVoices();
   } catch (error) { status.textContent = error.message; }
 };
 document.querySelector('#save').onclick = async () => {

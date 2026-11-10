@@ -23,6 +23,7 @@ from .youtube import YoutubeAudio, youtube_url
 from .cloud import TranslationSettings
 from .catalog import CatalogRequest, ProviderCatalog
 from .usage import collect_usage, usage_summary
+from .voices import Voice
 
 if os.environ.get('SYNCHRO_HOST_MODE') == '1':
     from .host import HostPipeline as Pipeline
@@ -36,6 +37,7 @@ if not TOKEN or not re.fullmatch(r'chrome-extension://[a-p]{32}', ORIGIN):
 
 pipeline = Pipeline(os.environ.get('SPEECH_URL', 'http://127.0.0.1:8002'),
                     os.environ.get('OLLAMA_URL', 'http://127.0.0.1:11435'),
+                    accent_url=os.environ.get('SYNCHRO_ACCENT_URL', 'http://127.0.0.1:8775'),
                     model=os.environ.get('SYNCHRO_MODEL', 'gemma4:12b'), api=os.environ.get('SYNCHRO_LLM_API', 'ollama'),
                     asr_url=os.environ.get('SYNCHRO_ASR_URL', ''), asr_token=os.environ.get('SYNCHRO_ASR_TOKEN', ''),
                     silero_url=os.environ.get('SYNCHRO_SILERO_URL', ''), silero_token=os.environ.get('SYNCHRO_SILERO_TOKEN', ''),
@@ -156,7 +158,7 @@ async def reserve(owner, voice, translation=None):
 
 @app.get('/health')
 async def health():
-    return {'service': 'synchro', 'version': '0.4.2', 'max_sessions': MAX_SESSIONS}
+    return {'service': 'synchro', 'version': '0.4.3', 'max_sessions': MAX_SESSIONS}
 
 
 @app.get('/api/check')
@@ -164,13 +166,19 @@ async def check(owner=Depends(authenticate)):
     return {'ok': True, 'client': owner, 'max_sessions': MAX_SESSIONS}
 
 
+@app.get('/api/voices')
+async def voices(mode: Literal['local', 'cloud_translation', 'cloud_all'] = 'local', owner=Depends(authenticate)):
+    note = 'VoiceStudio voices require cloud text translation on this server because its local translator shares the same GPU.' if mode == 'local' and pipeline.studio.shared_gpu and pipeline.studio.profiles else ''
+    return {'voices': pipeline.studio.available(mode), 'note': note}
+
+
 class SessionRequest(BaseModel):
-    voice: Literal['female', 'male', 'male-eugene'] = 'female'
+    voice: Voice = 'female'
     translation: TranslationSettings = Field(default_factory=TranslationSettings)
 
 
 @app.post('/api/session')
-async def start(body: SessionRequest | None = None, voice: Literal['female', 'male', 'male-eugene'] = 'female', owner=Depends(authenticate)):
+async def start(body: SessionRequest | None = None, voice: Voice = 'female', owner=Depends(authenticate)):
     selected = body or SessionRequest(voice=voice)
     current = await reserve(owner, selected.voice, selected.translation)
     try:

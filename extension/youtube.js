@@ -15,6 +15,8 @@
   const context = new AudioContext(), gain = context.createGain();
   gain.gain.value = ttsVolume; gain.connect(context.destination);
   const sources = new Map();
+  let heldCue = null;
+  let decodeQueue = Promise.resolve();
   const host = document.createElement('div');
   host.id = 'synchro-overlay';
   Object.assign(host.style, {position: 'absolute', inset: '0', zIndex: '70', pointerEvents: 'none'});
@@ -62,7 +64,7 @@
   }
   function stopAudio() {
     for (const source of sources.values()) { try { source.stop(); } catch {} }
-    sources.clear(); lastClock = 0;
+    sources.clear(); lastClock = 0; heldCue = null;
   }
   function pauseForBuffer() {
     buffering = true;
@@ -87,12 +89,13 @@
     if (wanted) { wanted = false; video.pause(); stopAudio(); }
     else {
       wanted = true;
-      if (!preparing && ready - video.currentTime > .2) { buffering = false; await video.play().catch(() => {}); }
+      if (!preparing && ready - video.currentTime > (finished ? .05 : 1.25)) { buffering = false; await video.play().catch(() => {}); }
       else buffering = true;
     }
   }
   function restart() {
     revision++; cues = []; ready = video.currentTime; finished = false; preparing = true; error = ''; failed = false;
+    decodeQueue = Promise.resolve();
     cloudUsage = undefined; text('usageText', '');
     pauseForBuffer();
     text('statusText', 'Preparing translation from the selected position…');
@@ -105,6 +108,7 @@
     seekTimer = setTimeout(restart, 250);
   }
   function paused() {
+    if (heldCue && internalPause) { internalPause = false; return; }
     stopAudio();
     if (internalPause) internalPause = false;
     else if (!video.seeking) wanted = false;
@@ -113,7 +117,7 @@
     if (closed) return;
     wanted = true;
     if (failed) { restart(); return; }
-    if (preparing || ready - video.currentTime < .25) pauseForBuffer();
+    if (preparing || ready - video.currentTime < (finished ? .05 : 1.1)) pauseForBuffer();
   }
   function cleanup() {
     if (closed) return;
@@ -130,6 +134,7 @@
   }
   function showError(message) {
     error = message; failed = true; preparing = false; wanted = false; pauseForBuffer();
+    void send('youtube-stop');
   }
   function receive(message) {
     const event = message.event;
@@ -141,14 +146,19 @@
     if (event.type === 'error') showError(event.message);
     if (event.type === 'opened') duration = event.duration;
     if (event.type === 'result') {
-      ready = event.ready_until; finished = event.finished;
-      for (const cue of event.segments) {
-        if (cues.some(item => item.id === cue.id)) continue;
-        const stamp = revision;
-        const bytes = Uint8Array.from(atob(cue.wav), char => char.charCodeAt(0));
-        delete cue.wav; cues.push(cue);
-        void context.decodeAudioData(bytes.buffer).then(buffer => { if (!closed && stamp === revision) cue.buffer = buffer; }).catch(() => { if (!closed && stamp === revision) showError('Could not decode translated speech'); });
-      }
+      const stamp = revision;
+      decodeQueue = decodeQueue.catch(() => {}).then(async () => {
+        if (closed || stamp !== revision || failed) return;
+        const decoded = [];
+        for (const {wav, ...cue} of event.segments) {
+          if (cues.some(item => item.id === cue.id)) continue;
+          const bytes = Uint8Array.from(atob(wav), char => char.charCodeAt(0));
+          cue.buffer = await context.decodeAudioData(bytes.buffer);
+          decoded.push(cue);
+        }
+        if (closed || stamp !== revision || failed) return;
+        cues.push(...decoded); ready = Math.max(ready, event.ready_until); finished = event.finished;
+      }).catch(() => { if (!closed && stamp === revision) showError('Could not decode translated speech'); });
     }
   }
   chrome.runtime.onMessage.addListener(receive);
@@ -176,24 +186,41 @@
     zoom = Math.max(.5, Math.min(3, Number(saved.zoom) || 1)); fit = saved.fit === 'cover' ? 'cover' : 'contain'; captions = saved.captions === true;
     gain.gain.value = ttsVolume;
     for (const [name, value] of [['tts', ttsVolume], ['original', originalVolume]]) { find(name).value = String(Math.round(value * 100)); find(name + 'Value').textContent = `${Math.round(value * 100)}%`; }
-    find('voice').value = ['female', 'male', 'male-eugene'].includes(data.voice) ? data.voice : 'female';
-    if (data.translation?.mode === 'cloud_all') [...find('voice').options].forEach((option, index) => { option.textContent = ['Nova · cloud female', 'Onyx · cloud male', 'Echo · cloud male'][index]; });
+    void send('youtube-voices').then(result => {
+      if (!result?.ok || closed || !Array.isArray(result.voices)) return;
+      const voices = result.voices.filter(voice => typeof voice.id === 'string' && typeof voice.name === 'string');
+      find('voice').replaceChildren(...voices.map(voice => {
+        const option = document.createElement('option'); option.value = voice.id; option.textContent = voice.name; return option;
+      }));
+      find('voice').value = voices.some(voice => voice.id === data.voice) ? data.voice : 'female';
+      find('voice').title = result.note || '';
+    });
     host.dataset.delay = String(Number(data.delay) || 20); applyPicture();
   });
   function tick() {
     if (closed) return;
     const ad = player.classList.contains('ad-showing');
-    if (ad) { wasAd = true; stopAudio(); video.playbackRate = 1; text('status', 'Ad · translation paused'); frame = requestAnimationFrame(tick); return; }
+    if (ad) { wasAd = true; stopAudio(); video.playbackRate = 1; text('statusText', 'Ad · translation paused'); frame = requestAnimationFrame(tick); return; }
     if (wasAd) { wasAd = false; restart(); }
     const time = video.currentTime;
-    const cue = cues.find(item => item.start <= time && time < item.start + item.source_duration);
-    const rate = cue ? Math.max(.0625, Math.min(1, cue.source_duration / cue.duration)) : 1;
+    if (heldCue && sources.get(heldCue.id)?.done) {
+      heldCue = null;
+      if (wanted && !preparing && !error) void video.play().catch(() => { wanted = false; });
+    }
+    // Keep an exceptionally long voice's last words when Chromium reaches its minimum video speed.
+    if (!heldCue && wanted && !video.paused && !video.seeking) {
+      const unfinished = cues.find(item => item.source_duration / item.duration < .0625 &&
+        time >= item.start + item.source_duration && sources.has(item.id) && !sources.get(item.id).done);
+      if (unfinished) { heldCue = unfinished; internalPause = true; video.pause(); }
+    }
+    const cue = heldCue || cues.find(item => item.start <= time && time < item.start + item.source_duration);
+    const rate = cue ? Math.max(.0625, Math.min(16, cue.source_duration / cue.duration)) : 1;
     if (Math.abs(video.playbackRate - rate) > .0001) { stopAudio(); video.playbackRate = rate; }
-    if (lastClock && Math.abs((time - lastTime) / rate - (context.currentTime - lastClock)) > .18) stopAudio();
-    if (preparing && (ready - time >= Math.min(10, Number(host.dataset.delay) || 20, duration - time - .1) || finished && ready - time > .1)) preparing = false;
-    if (wanted && !preparing && !error && video.paused && buffering && ready - time > .25) { buffering = false; void context.resume(); void video.play().catch(() => { wanted = false; }); }
-    if (wanted && !video.paused && (ready - time < .2 && !finished || preparing)) pauseForBuffer();
-    const running = wanted && !video.paused && !video.seeking && video.readyState >= 3 && !preparing && !error;
+    if (!heldCue && lastClock && Math.abs((time - lastTime) / rate - (context.currentTime - lastClock)) > .18) stopAudio();
+    if (preparing && (ready - time >= Math.min(10, Number(host.dataset.delay) || 20, duration - time - .1) - .025 || finished && ready - time > .1)) preparing = false;
+    if (wanted && !preparing && !error && video.paused && buffering && ready - time > (finished ? .05 : 1.25)) { buffering = false; void context.resume(); void video.play().catch(() => { wanted = false; }); }
+    if (wanted && !video.paused && (ready - time < 1.1 && !finished || preparing)) pauseForBuffer();
+    const running = wanted && (!video.paused || heldCue) && !video.seeking && video.readyState >= 3 && !preparing && !error;
     if (!running) stopAudio();
     else {
       if (!lastClock) { lastClock = context.currentTime; lastTime = time; }

@@ -97,7 +97,7 @@ class YoutubeAudio:
         media = urlsplit(info.get("url", ""))
         if media.scheme != "https" or not (media.hostname or "").endswith(".googlevideo.com") or media.port not in (None, 443) or media.username:
             raise ValueError("YouTube returned an unsupported audio source")
-        base = math.floor(position / 10) * 10
+        base = position
         headers = info.get("http_headers", {})
         agent = headers.get("User-Agent", "Mozilla/5.0")
         if "\r" in agent or "\n" in agent:
