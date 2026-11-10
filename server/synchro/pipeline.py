@@ -117,7 +117,8 @@ async def normalize_wav(data: bytes) -> bytes:
             raise ValueError('Could not normalize speech loudness')
         return output, errors
     _, report = await ffmpeg('-af', 'loudnorm=I=-18:TP=-1.5:LRA=11:print_format=json', '-f', 'null', '-')
-    measured = json.loads(report[report.rfind(b'{'):])
+    # Newer FFmpeg versions can append output statistics after the JSON report.
+    measured, _ = json.JSONDecoder().raw_decode(report[report.rfind(b'{'):].decode())
     loudness, peak = float(measured['input_i']), float(measured['input_tp'])
     if not math.isfinite(loudness) or not math.isfinite(peak):
         return data

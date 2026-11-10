@@ -89,6 +89,15 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         silence = wav_bytes(b'\0\0' * 22050, 22050)
         self.assertEqual(await normalize_wav(silence), silence)
 
+    async def test_loudness_report_can_have_trailing_ffmpeg_statistics(self):
+        from types import SimpleNamespace
+        data = wav_bytes(b'\0\1' * 16000)
+        report = b'FFmpeg report\n{"input_i":"-24","input_tp":"-12"}\n[out#0/null] audio:0KiB\n'
+        process = SimpleNamespace(returncode=0, communicate=AsyncMock(side_effect=[(b'', report), (data, b'')]))
+        with patch('synchro.pipeline.asyncio.create_subprocess_exec', new=AsyncMock(return_value=process)):
+            self.assertEqual(await normalize_wav(data), data)
+        self.assertEqual(process.communicate.await_count, 2)
+
     def test_all_piper_sentences_are_preserved_in_one_wav(self):
         first = wav_bytes(b'\1\0' * 22050, 22050)
         second = wav_bytes(b'\2\0' * 44100, 22050)

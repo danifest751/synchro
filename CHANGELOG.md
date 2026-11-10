@@ -8,6 +8,7 @@
 - Added Xenia, Aidar, and Eugene voice choices using Silero v5.5.
 - Preserved complete multi-sentence TTS responses by joining concatenated RIFF/WAV files.
 - Added consistent phrase loudness and smoother original-audio ducking.
+- Accepted trailing FFmpeg output statistics after loudness JSON reports for compatibility with newer FFmpeg releases.
 - Preserved original spelling during stress handling and disabled automatic yo substitution in Silero.
 - Improved visibility of YouTube overlay controls and picture settings.
 - Disabled proxy upstream keepalive in the reference Caddy configuration to fix stale-connection 502 errors.
