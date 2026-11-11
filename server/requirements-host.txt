@@ -4,3 +4,4 @@ onnxruntime==1.31.1
 faster-whisper==1.2.1
 torch>=2.8,<3
 ruaccent==1.5.8.3
+sherpa-onnx==2.0.1

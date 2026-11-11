@@ -7,7 +7,7 @@ Watch English videos with synchronized Russian voiceover, powered by models on y
 
 Synchro is a Manifest V3 browser extension and a Python backend. On YouTube, video stays in the native player while the server fetches and translates the audio track. A small playback buffer gives local speech recognition, translation, and speech synthesis time to work.
 
-**Status: prototype 0.4.4.** English → Russian is the implemented language pair. The interface and documentation are in English. This repository does not provide a hosted service, access keys, or model weights. Choose local processing, cloud text translation, or a fully cloud AI pipeline; see [cloud modes](docs/CLOUD.md). Optional [CPU speech on the browser's computer](docs/HOST.md) avoids a remote speech server. Optional [GitHub extension updates](docs/UPDATES.md) preserve installed connection settings.
+**Status: prototype 0.4.5.** English, Chinese, Korean, and Japanese videos are translated into Russian. The interface and documentation are in English. This repository does not provide a hosted service, access keys, or model weights. Choose local processing, cloud text translation, or a fully cloud AI pipeline; see [cloud modes](docs/CLOUD.md). Optional [CPU speech on the browser's computer](docs/HOST.md) avoids a remote speech server. Optional [GitHub extension updates](docs/UPDATES.md) preserve installed connection settings.
 
 ## Features
 
@@ -16,6 +16,7 @@ Synchro is a Manifest V3 browser extension and a Python backend. On YouTube, vid
 - Optional cloud text translation through OpenAI, Kilo Gateway, or OpenRouter, selected per viewer in settings.
 - Searchable Kilo/OpenRouter model catalogs with translation models first, live account balance, and approximate text-translation cost per minute.
 - Five Silero V5 CIS voices: Roman, Eduard, Albina, Alexander, and Alfia.
+- English recognition with GigaAM; Chinese, Korean, and Japanese with SenseVoice-Small on CPU; Whisper as a fallback.
 - Separate controls for original audio and voiceover, smooth audio ducking, optional captions, zoom, fit, and fill.
 - Video waits when translation is not ready and slows down for longer translated phrases.
 - Tab capture and a separate delayed player for other sites, using browser disk storage.

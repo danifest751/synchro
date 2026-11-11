@@ -2,7 +2,7 @@ import {serverBase} from './connection.mjs';
 import {PROVIDERS, translationSettings} from './translation.mjs';
 import {createModelPicker} from './model-picker.mjs';
 const token = document.querySelector('#token'), delay = document.querySelector('#delay'), status = document.querySelector('#status');
-const config = await chrome.storage.local.get(['token', 'delay', 'autoUpdate', 'voice', 'apiBase', 'translation', 'cloudProfiles']);
+const config = await chrome.storage.local.get(['token', 'delay', 'autoUpdate', 'voice', 'sourceLanguage', 'apiBase', 'translation', 'cloudProfiles']);
 const provider = document.querySelector('#provider'), cloudModel = document.querySelector('#cloudModel'), cloudKey = document.querySelector('#cloudKey');
 const profiles = config.cloudProfiles || {};
 const voice = document.querySelector('#voice');
@@ -71,7 +71,7 @@ document.querySelector('#testTranslation').onclick = async (event) => {
     const selectedTranslation = translation(), full = selectedTranslation.mode !== 'local';
     const response = await fetch(serverBase(server.value) + (full ? '/api/pipeline/check' : '/api/translation/check'), {method: 'POST',
       headers: {Authorization: `Bearer ${token.value.trim() || config.token}`, 'Content-Type': 'application/json'},
-      body: JSON.stringify(full ? {voice: document.querySelector('#voice').value, translation: selectedTranslation} : selectedTranslation), signal: AbortSignal.timeout(115000)});
+      body: JSON.stringify(full ? {voice: document.querySelector('#voice').value, language: document.querySelector('#sourceLanguage').value, translation: selectedTranslation} : selectedTranslation), signal: AbortSignal.timeout(115000)});
     const result = await response.json();
     if (!response.ok) throw new Error(typeof result.detail === 'string' ? result.detail : `Server: ${response.status}`);
     const usage = result.cloud_usage;
@@ -81,6 +81,9 @@ document.querySelector('#testTranslation').onclick = async (event) => {
 };
 const server = document.querySelector('#server'); server.value = serverBase(config.apiBase);
 voice.onchange = () => chrome.storage.local.set({voice: voice.value});
+const sourceLanguage = document.querySelector('#sourceLanguage');
+sourceLanguage.value = config.sourceLanguage || 'en';
+sourceLanguage.onchange = () => chrome.storage.local.set({sourceLanguage: sourceLanguage.value});
 document.querySelector('#version').textContent = `Version ${chrome.runtime.getManifest().version}`;
 const autoUpdate = document.querySelector('#autoUpdate'); autoUpdate.checked = config.autoUpdate !== false;
 autoUpdate.onchange = () => chrome.storage.local.set({autoUpdate: autoUpdate.checked});
@@ -108,7 +111,7 @@ document.querySelector('#save').onclick = async () => {
     const response = await fetch(apiBase + '/api/check', {headers: {Authorization: `Bearer ${savedToken}`}, signal: AbortSignal.timeout(10000)});
     if (!response.ok || !(await response.json()).ok) throw new Error('Invalid token or server');
     const selectedTranslation = translation();
-    await chrome.storage.local.set({token: savedToken, delay: seconds, voice: voice.value, apiBase, translation: selectedTranslation, cloudProfiles: profiles});
+    await chrome.storage.local.set({token: savedToken, delay: seconds, voice: voice.value, sourceLanguage: sourceLanguage.value, apiBase, translation: selectedTranslation, cloudProfiles: profiles});
     config.translation = selectedTranslation;
     cloudKey.value = ''; cloudKey.placeholder = selected === 'local' ? '' : 'API key saved';
     config.token = savedToken; token.value = ''; token.placeholder = 'Token saved';

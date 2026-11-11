@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.5 — 2026-11-11
+
+- Added Chinese, Korean, and Japanese videos. A Video language setting (options page and player panel) selects the original-language YouTube audio track, the recognizer, and the translation prompt.
+- Chinese, Korean, and Japanese are recognized by SenseVoice-Small int8 through sherpa-onnx on CPU (about 50× real time on an 8-core laptop); Whisper with the selected language is the fallback. English stays on GigaAM.
+- Phrase splitting understands `。！？`; untranslated Han, kana, or Hangul never reaches Russian speech.
+
 ## 0.4.4 — 2026-11-11
 
 - Replaced Xenia/Aidar/Eugene and the optional VoiceStudio voices with five Silero V5 CIS voices (Roman, Eduard, Albina, Alexander, Alfia); legacy voice IDs map to them. RUAccent marks stress on the host worker and through the gateway accent service.

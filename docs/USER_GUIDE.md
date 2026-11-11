@@ -32,6 +32,7 @@ Video is loaded by YouTube directly in your browser. Synchro's server separately
 | Captions | Show or hide translated captions; off by default |
 | Settings | Select voice, adjust audio levels and picture |
 | Voice | Local: Roman, Eduard, Albina, Alexander, Alfia; full cloud: Nova, Onyx, Echo |
+| Video language | Spoken language of the video: English, Chinese, Korean, or Japanese; changing it restarts translation at the current position |
 | Dismiss / Retry translation | Clear an error message or restart at the current position |
 | Cloud usage | Provider-reported USD total; hover for stage details and missing-price notes |
 | Voiceover / Original | Set the two audio levels independently |

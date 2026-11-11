@@ -45,6 +45,7 @@
   <div class="bar"><strong>Synchro</strong><button id="toggle" aria-label="Play with translation" title="Play with translation">${icons.play}</button><button id="captions" aria-label="Translation captions" title="Translation captions" aria-pressed="false">${icons.captions}</button><button id="settings" aria-label="Translation settings" title="Translation settings" aria-expanded="false">${icons.settings}</button><button id="close" aria-label="Close translation" title="Close translation">${icons.close}</button></div>
   <section class="panel" id="panel" aria-label="Translation settings" hidden>
     <label>Voice<select id="voice"><option value="albina">Albina · female</option><option value="alfia">Alfia · female</option><option value="roman">Roman · male</option><option value="eduard">Eduard · male</option><option value="alexandr">Alexander · male</option></select></label>
+    <label>Video language<select id="sourceLanguage"><option value="en">English</option><option value="zh">Chinese</option><option value="ko">Korean</option><option value="ja">Japanese</option></select></label>
     <label><span>Voiceover <output id="ttsValue">90%</output></span><input id="tts" aria-label="Voiceover volume" type="range" min="0" max="100" value="90"></label>
     <label><span>Original <output id="originalValue">55%</output></span><input id="original" aria-label="Original volume" type="range" min="0" max="100" value="55"></label>
     <label><span>Zoom <output id="zoomValue">100%</output></span><input id="zoom" aria-label="Video zoom" type="range" min="50" max="300" value="100"></label>
@@ -179,7 +180,8 @@
   find('fit').onclick = () => { fit = 'contain'; zoom = 1; applyPicture(); save(); };
   find('fill').onclick = () => { fit = 'cover'; zoom = 1; applyPicture(); save(); };
   find('voice').onchange = async event => { await chrome.storage.local.set({voice: event.target.value}); restart(); };
-  void chrome.storage.local.get(['youtubeView', 'voice', 'delay', 'translation']).then(data => {
+  find('sourceLanguage').onchange = async event => { await chrome.storage.local.set({sourceLanguage: event.target.value}); restart(); };
+  void chrome.storage.local.get(['youtubeView', 'voice', 'sourceLanguage', 'delay', 'translation']).then(data => {
     const saved = data.youtubeView || {};
     ttsVolume = Math.max(0, Math.min(1, Number(saved.ttsVolume ?? .9)));
     originalVolume = Math.max(0, Math.min(1, Number(saved.originalVolume ?? .55)));
@@ -193,6 +195,7 @@
     if (allCloud) voiceSelect.innerHTML = '<option value="female">Nova · cloud female</option><option value="male">Onyx · cloud male</option><option value="male-eugene">Echo · cloud male</option>';
     const selectedVoice = aliases[data.voice] || data.voice;
     if ([...voiceSelect.options].some(option => option.value === selectedVoice)) voiceSelect.value = selectedVoice;
+    find('sourceLanguage').value = ['en', 'zh', 'ko', 'ja'].includes(data.sourceLanguage) ? data.sourceLanguage : 'en';
     host.dataset.delay = String(Number(data.delay) || 20); applyPicture();
   });
   function tick() {

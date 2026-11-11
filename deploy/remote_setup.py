@@ -21,6 +21,10 @@ def run(*args):
     subprocess.run(args, check=True)
 
 run('docker', 'build', '-t', 'synchro-speech:prototype', '-f', 'deploy/speech.Dockerfile', 'deploy')
+# Chinese, Korean and Japanese recognition; without the model those languages use Whisper.
+models = ROOT / '.local/models/sensevoice'
+sensevoice = ['--mount', f'type=bind,src={models},dst=/models/sensevoice,readonly',
+              '-e', 'SYNCHRO_SENSEVOICE_MODEL=/models/sensevoice'] if (models / 'model.int8.onnx').is_file() else []
 run('docker', 'build', '-t', 'synchro-gateway:prototype', '-f', 'deploy/gateway.Dockerfile', '.')
 for name in ['synchro-speech', 'synchro-gateway']:
     if subprocess.run(['docker', 'inspect', name], capture_output=True).returncode == 0:
@@ -32,6 +36,6 @@ run('docker', 'run', '-d', '--name', 'synchro-speech', '--label', 'app=synchro',
     'synchro-speech:prototype')
 run('docker', 'run', '-d', '--name', 'synchro-gateway', '--label', 'app=synchro', '--restart', 'unless-stopped',
     '--network', 'host', '--env-file', str(env_path),
-    '-e', 'SYNCHRO_CLIENTS_FILE=/run/synchro-clients/tokens.json',
+    '-e', 'SYNCHRO_CLIENTS_FILE=/run/synchro-clients/tokens.json', *sensevoice,
     '--mount', f'type=bind,src={clients},dst=/run/synchro-clients,readonly', 'synchro-gateway:prototype')
 print('Docker services started. Translation, GigaAM and Silero must run separately.')

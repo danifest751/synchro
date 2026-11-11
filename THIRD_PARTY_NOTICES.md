@@ -62,3 +62,10 @@ and retain their upstream licenses:
 https://github.com/openai/whisper , https://github.com/SYSTRAN/faster-whisper ,
 https://github.com/speaches-ai/speaches , https://github.com/pytorch/pytorch ,
 https://ffmpeg.org/legal.html . Piper voice licenses must be checked per voice.
+
+SenseVoice-Small weights (FunAudioLLM / Alibaba Group) are not distributed with
+Synchro. They are licensed under the FunASR Model Open Source License Agreement,
+which requires attribution of the source and author and retaining the model name:
+https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE ,
+https://github.com/FunAudioLLM/SenseVoice . The sherpa-onnx runtime is
+Apache-2.0: https://github.com/k2-fsa/sherpa-onnx .

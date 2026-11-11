@@ -11,7 +11,7 @@ def source_phrases(words, cutoff):
         if current:
             gap = float(word['start']) - float(current[-1]['end'])
             span = float(current[-1]['end']) - float(current[0]['start'])
-            if gap >= .45 or span >= 6 or span >= 1 and re.search(r'[.!?…]["\')\]]*$', current[-1]['word']):
+            if gap >= .45 or span >= 6 or span >= 1 and re.search(r'[.!?…。！？]["\')\]」』]*$', current[-1]['word']):
                 groups.append(current)
                 current = []
         current.append(word)

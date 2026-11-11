@@ -50,40 +50,41 @@ class YoutubeAudio:
         self.restarts = 0
 
     @classmethod
-    async def open(cls, url: str, position: float):
+    async def open(cls, url: str, position: float, language: str = 'en'):
         url = youtube_url(url)
         if not math.isfinite(position) or position < 0:
             raise ValueError("Invalid video position")
         args = [sys.executable, "-m", "yt_dlp", "--ignore-config", "--no-playlist", "--no-warnings",
                 "--js-runtimes", "node", "--socket-timeout", "15", "--retries", "1",
-                "-f", "ba[language^=en][ext=m4a]/ba[language^=en]/ba[ext=m4a]/ba"]
+                # Prefer the original-language track: videos can carry automatic dubs in other languages.
+                "-f", f"ba[language^={language}][ext=m4a]/ba[language^={language}]/ba[ext=m4a]/ba"]
         proxy = os.environ.get("YTDLP_PROXY", "")
         if proxy:
             args += ["--proxy", proxy]
 
         async def reopen(at):
             # A signed media URL can expire during a long pause; resolve it again.
-            _metadata.pop(url, None)
-            return await cls.spawn(await cls.cached_info(args, url), at, proxy)
+            _metadata.pop((url, language), None)
+            return await cls.spawn(await cls.cached_info(args, url, language), at, proxy)
 
-        info = await cls.cached_info(args, url)
+        info = await cls.cached_info(args, url, language)
         try:
             return await cls.from_info(info, position, proxy, reopen)
         except Exception:
-            _metadata.pop(url, None)
+            _metadata.pop((url, language), None)
             raise
 
     @classmethod
-    async def cached_info(cls, args, url):
+    async def cached_info(cls, args, url, language):
         # Serialize YouTube JavaScript challenges.
         async with _resolution_lock:
-            cached = _metadata.get(url)
+            cached = _metadata.get((url, language))
             if cached and time.monotonic() - cached[0] < 600:
                 return cached[1]
             info = await cls.resolve(args, url)
             if len(_metadata) >= 3:
                 _metadata.pop(min(_metadata, key=lambda item: _metadata[item][0]))
-            _metadata[url] = (time.monotonic(), info)
+            _metadata[url, language] = (time.monotonic(), info)
             return info
 
     @staticmethod

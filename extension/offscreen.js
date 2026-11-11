@@ -156,7 +156,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
   if (message.type === 'prepare') {
     config = message.config;
     Promise.resolve().then(() => api('/api/session', {method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({voice: config.voice || 'female', translation: translationSettings(config.translation)})}))
+      body: JSON.stringify({voice: config.voice || 'female', language: config.sourceLanguage || 'en', translation: translationSettings(config.translation)})}))
       .then(result => { sessionId = result.session_id; respond({ok: true}); }).catch(error => respond({ok: false, error: error.message}));
   }
   else if (message.type === 'start') begin(message.streamId, message.config).then(() => respond({ok: true})).catch(error => respond({ok: false, error: error.message}));

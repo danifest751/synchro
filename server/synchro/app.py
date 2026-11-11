@@ -43,7 +43,8 @@ pipeline = Pipeline(os.environ.get('SPEECH_URL', 'http://127.0.0.1:8002'),
                     silero_url=os.environ.get('SYNCHRO_SILERO_URL', ''), silero_token=os.environ.get('SYNCHRO_SILERO_TOKEN', ''),
                     cloud_proxy=os.environ.get('SYNCHRO_CLOUD_PROXY', ''),
                     cloud_tunnels={name: int(os.environ.get(f'SYNCHRO_{name.upper()}_TUNNEL_PORT', '0'))
-                                   for name in ['openai', 'kilo', 'openrouter']})
+                                   for name in ['openai', 'kilo', 'openrouter']},
+                    sensevoice_model=os.environ.get('SYNCHRO_SENSEVOICE_MODEL', ''))
 catalog = ProviderCatalog(pipeline)
 sessions = {}
 registry_lock = asyncio.Lock()
@@ -144,7 +145,7 @@ def owned(session_id, owner):
     return current
 
 
-async def reserve(owner, voice, translation=None):
+async def reserve(owner, voice, translation=None, language='en'):
     async with registry_lock:
         await reap()
         # One key holds one place: a seek, reload or second tab replaces the previous session.
@@ -153,7 +154,7 @@ async def reserve(owner, voice, translation=None):
         if len(sessions) >= MAX_SESSIONS:
             raise HTTPException(503, f'All {MAX_SESSIONS} slots are occupied. Try again when a viewer finishes')
         current = Session(id=uuid.uuid4().hex, touched=time.monotonic(), voice=voice, owner=owner,
-                          translation=translation or TranslationSettings())
+                          translation=translation or TranslationSettings(), language=language)
         sessions[current.id] = current
         return current
 
@@ -174,14 +175,14 @@ async def exclusive(current, coroutine):
         current.work = None
 
 
-async def warm_models(voice, translation):
+async def warm_models(voice, translation, language='en'):
     # Every seek starts a session; skip a full model round trip that succeeded moments ago.
-    key = (voice, translation.mode, translation.provider, translation.model,
+    key = (voice, language, translation.mode, translation.provider, translation.model,
            hashlib.sha256(translation.api_key.get_secret_value().encode()).hexdigest())
     if time.monotonic() - warm.get(key, -math.inf) < 300:
         return
     async with warmup_lock:
-        await pipeline.warmup(voice, translation)
+        await pipeline.warmup(voice, translation, language)
     if len(warm) >= 64:
         warm.clear()
     warm[key] = time.monotonic()
@@ -194,12 +195,12 @@ def failure(stage, error):
 
 async def warm_session(current):
     with collect_usage(current.usage):
-        await warm_models(current.voice, current.translation)
+        await warm_models(current.voice, current.translation, current.language)
     current.touched = time.monotonic()
 
 
 async def open_video(current, url, position):
-    current.audio = await YoutubeAudio.open(url, position)
+    current.audio = await YoutubeAudio.open(url, position, current.language)
     await warm_session(current)
     current.offset = round(current.audio.base * 16000)
 
@@ -238,7 +239,7 @@ async def next_video_window(current, ready=None):
 
 @app.get('/health')
 async def health():
-    return {'service': 'synchro', 'version': '0.4.4', 'max_sessions': MAX_SESSIONS}
+    return {'service': 'synchro', 'version': '0.4.5', 'max_sessions': MAX_SESSIONS}
 
 
 @app.get('/api/check')
@@ -247,17 +248,19 @@ async def check(owner=Depends(authenticate)):
 
 
 Voice = Literal['roman', 'eduard', 'albina', 'alexandr', 'alfia', 'female', 'male', 'male-eugene']
+Language = Literal['en', 'zh', 'ko', 'ja']
 
 
 class SessionRequest(BaseModel):
     voice: Voice = 'female'
+    language: Language = 'en'
     translation: TranslationSettings = Field(default_factory=TranslationSettings)
 
 
 @app.post('/api/session')
 async def start(body: SessionRequest | None = None, voice: Voice = 'female', owner=Depends(authenticate)):
     selected = body or SessionRequest(voice=voice)
-    current = await reserve(owner, selected.voice, selected.translation)
+    current = await reserve(owner, selected.voice, selected.translation, selected.language)
     try:
         async with current.lock, asyncio.timeout(105):
             await exclusive(current, warm_session(current))
@@ -324,7 +327,7 @@ async def start_video(body: VideoRequest, owner=Depends(authenticate)):
         url = youtube_url(body.url)
     except ValueError as error:
         raise HTTPException(422, str(error))
-    current = await reserve(owner, body.voice, body.translation)
+    current = await reserve(owner, body.voice, body.translation, body.language)
     try:
         async with current.lock, asyncio.timeout(105):
             await exclusive(current, open_video(current, url, body.position))
@@ -357,7 +360,7 @@ async def check_pipeline(body: SessionRequest, owner=Depends(authenticate)):
     try:
         async with asyncio.timeout(105), warmup_lock:
             with collect_usage(usage):
-                await pipeline.warmup(body.voice, body.translation)
+                await pipeline.warmup(body.voice, body.translation, body.language)
     except ValueError as error:
         raise HTTPException(502, str(error))
     except TimeoutError:

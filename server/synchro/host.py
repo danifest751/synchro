@@ -8,7 +8,7 @@ import re
 import time
 
 from .pipeline import Pipeline, RATE, SILERO_VOICES, normalize_wav, wav_bytes
-from .stress import preserve_stress, silero_marks, spoken_text
+from .stress import FOREIGN, preserve_stress, silero_marks, spoken_text
 
 
 def load_host_accent():
@@ -65,18 +65,27 @@ class HostPipeline(Pipeline):
         samples = np.frombuffer(pcm, dtype='<i2').astype(np.float32) / 32768
         result = self.host_asr.recognize(samples, sample_rate=RATE)
         if re.search(r'[А-Яа-яЁё]', result.text) or not result.text.strip() and np.any(samples):
-            if self.host_whisper is None:
-                from faster_whisper import WhisperModel
-                self.host_whisper = WhisperModel(os.environ['SYNCHRO_HOST_WHISPER_MODEL'], device='cpu',
-                    compute_type='int8', cpu_threads=8, num_workers=1, local_files_only=True)
             logging.getLogger('uvicorn.error').info('host_asr engine=whisper device=cpu reason=empty_or_alphabet')
-            segments, _ = self.host_whisper.transcribe(samples, language='en', beam_size=1, word_timestamps=True,
-                condition_on_previous_text=False, vad_filter=True)
-            words = [{'word': word.word, 'start': word.start, 'end': word.end} for segment in segments for word in segment.words or []]
-            return {'text': ''.join(word['word'] for word in words), 'words': words}
+            return self.whisper_cpu(pcm, 'en')
         # Reuse the worker's CTC decoder; run_host.py adds the repository to sys.path.
         from deploy.gigaam_server import word_timestamps
         return {'text': result.text, 'words': word_timestamps(result.tokens, result.timestamps, len(pcm) / (RATE * 2))}
+
+    def whisper_cpu(self, pcm, language):
+        import numpy as np
+        if self.host_whisper is None:
+            from faster_whisper import WhisperModel
+            self.host_whisper = WhisperModel(os.environ['SYNCHRO_HOST_WHISPER_MODEL'], device='cpu',
+                compute_type='int8', cpu_threads=8, num_workers=1, local_files_only=True)
+        samples = np.frombuffer(pcm, dtype='<i2').astype(np.float32) / 32768
+        segments, _ = self.host_whisper.transcribe(samples, language=language, beam_size=1, word_timestamps=True,
+            condition_on_previous_text=False, vad_filter=True)
+        words = [{'word': word.word, 'start': word.start, 'end': word.end} for segment in segments for word in segment.words or []]
+        return {'text': ''.join(word['word'] for word in words), 'words': words}
+
+    async def whisper(self, pcm, language):
+        async with self.host_lock:
+            return await asyncio.get_running_loop().run_in_executor(self.host_executor, self.whisper_cpu, pcm, language)
 
     async def transcribe(self, pcm):
         started = time.monotonic()
@@ -87,7 +96,7 @@ class HostPipeline(Pipeline):
 
     def synthesize_cpu(self, text, voice):
         import torch
-        if not isinstance(text, str) or not 0 < len(text.strip()) <= 2000 or re.search(r'[A-Za-z0-9]', text):
+        if not isinstance(text, str) or not 0 < len(text.strip()) <= 2000 or FOREIGN.search(text):
             raise ValueError('Russian speech needs Cyrillic names and numbers written as words')
         if self.host_tts is None:
             torch.set_num_threads(2)

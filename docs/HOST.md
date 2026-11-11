@@ -14,6 +14,8 @@ The Windows prototype was prepared on a Ryzen 7 8745HS (8 cores / 16 threads), a
    python -c "from ruaccent import RUAccent; RUAccent().load(omograph_model_size='turbo3.1', use_dictionary=True, device='CPU', workdir='C:/models/ruaccent')"
    ```
 
+   For Chinese, Korean, and Japanese videos, extract `model.int8.onnx` and `tokens.txt` from the [SenseVoice-Small int8 package](https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2) into `C:/models/sensevoice`. Without it those languages use the slower Whisper model.
+
    The host worker then marks stress itself using those local files. The worker loads only local files and does not download a missing model during playback.
 3. Generate private gateway keys with `python tools/init_config.py --server-url http://127.0.0.1:8778` in a fresh checkout, or prepare a separate private environment file without overwriting an existing server's keys.
 4. Add these paths to the private gateway environment file:
@@ -23,6 +25,7 @@ SYNCHRO_HOST_ASR_MODEL=C:/models/gigaam-multilingual
 SYNCHRO_HOST_TTS_MODEL=C:/models/silero/v5_cis_base_nostress.pt
 SYNCHRO_HOST_ACCENT_MODEL=C:/models/ruaccent
 SYNCHRO_HOST_WHISPER_MODEL=C:/models/faster-whisper-large-v3-turbo
+SYNCHRO_SENSEVOICE_MODEL=C:/models/sensevoice
 SYNCHRO_FFMPEG_DIR=C:/tools/ffmpeg/bin
 SYNCHRO_MAX_SESSIONS=1
 ```

@@ -50,3 +50,7 @@ Synchro's [MIT license](../LICENSE) applies to its own source and documentation.
 - The optional Piper/eSpeak data path includes GPL-licensed eSpeak NG material inside the built speech image. Distribution of that image has separate obligations. This repository does not bundle that image or those data.
 
 See [third-party notices](../THIRD_PARTY_NOTICES.md) for the retained Avorythm notice and upstream links.
+
+## Chinese, Korean and Japanese recognition on CPU
+
+Measured on a Ryzen 7 8745HS with eight threads, the same 21-second English window, median of three runs: SenseVoice-Small int8 (sherpa-onnx) 0.42 s, GigaAM Multilingual CTC 0.92 s, faster-whisper large-v3-turbo int8 with word timestamps 7.49 s. On real 21-second talk windows SenseVoice took 1.7–2.2 s including the first model load. GigaAM's vocabulary contains only Latin and Cyrillic letters, so it cannot transcribe Han, kana, or Hangul. SenseVoice transcribes English with dropped and merged words, so English stays on GigaAM. Its Korean output can split words with extra spaces; translation tolerates this.

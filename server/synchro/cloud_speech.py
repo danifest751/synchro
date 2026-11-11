@@ -29,14 +29,14 @@ def route(settings, path, tunnel_port):
     return url, headers, extensions
 
 
-async def transcribe(client, settings, wav, tunnel_port=0):
+async def transcribe(client, settings, wav, tunnel_port=0, language='en'):
     url, headers, extensions = route(settings, '/audio/transcriptions', tunnel_port)
     name = PROVIDERS[settings.provider][0]
     model = 'whisper-1' if settings.provider == 'openai' else 'openai/whisper-1'
     try:
         async with asyncio.timeout(45):
             response = await client.post(url, headers=headers, extensions=extensions,
-                files={'file': ('window.wav', wav, 'audio/wav')}, data={'model': model, 'language': 'en',
+                files={'file': ('window.wav', wav, 'audio/wav')}, data={'model': model, 'language': language,
                 'response_format': 'verbose_json', 'timestamp_granularities[]': 'word'}, timeout=40)
         try:
             data = response.json()

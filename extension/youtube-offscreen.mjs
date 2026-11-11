@@ -38,7 +38,7 @@ async function run(state) {
   try {
     emit(state, {type: 'loading'});
     // The initial request must return its ID even after cancellation so the session can be deleted.
-    const opened = await request(state, '/api/video', 'POST', {url: state.url, position: state.position, voice: state.config.voice || 'female', translation: translationSettings(state.config.translation)}, false);
+    const opened = await request(state, '/api/video', 'POST', {url: state.url, position: state.position, voice: state.config.voice || 'female', language: state.config.sourceLanguage || 'en', translation: translationSettings(state.config.translation)}, false);
     state.id = opened.session_id;
     if (state.stopped) return;
     emit(state, {type: 'opened', ...opened});

@@ -2,6 +2,11 @@ import re
 import unicodedata
 
 
+CJK = re.compile(r'[ᄀ-ᇿ぀-ヿ㄰-㆏㐀-鿿가-힯豈-﫿]+')
+# Russian speech cannot pronounce these: Latin letters, digits, Han, kana and Hangul.
+FOREIGN = re.compile(r'[A-Za-z0-9ᄀ-ᇿ぀-ヿ㄰-㆏㐀-鿿가-힯豈-﫿]')
+
+
 def spoken_text(text):
     return text.replace('+', ' плюс ')
 
@@ -59,7 +64,9 @@ def latin_word(word):
 
 
 def cyrillic_spelling(text):
-    """Last-resort speech spelling when a model leaves Latin names or digits in Russian text."""
+    """Last-resort speech spelling when a model leaves Latin names, digits or source script in Russian text."""
+    # shortcut: untranslated Han, kana and Hangul are dropped, not transliterated; add romanization if this appears in logs.
+    text = CJK.sub(' ', text)
     text = re.sub(r'[A-Za-z]+', lambda match: f' {latin_word(match[0])} ', text)
     text = re.sub(r'\d+', lambda match: ' ' + (number_words(int(match[0])) if len(match[0]) <= 12 else
                   ' '.join(UNITS[int(digit)] for digit in match[0])) + ' ', text)

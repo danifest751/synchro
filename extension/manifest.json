@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Synchro — Local Video Dubbing",
-  "version": "0.4.4",
+  "version": "0.4.5",
   "description": "English videos with Russian voiceover powered by your own server.",
   "minimum_chrome_version": "116",
   "permissions": [
