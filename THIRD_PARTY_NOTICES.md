@@ -69,3 +69,17 @@ which requires attribution of the source and author and retaining the model name
 https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE ,
 https://github.com/FunAudioLLM/SenseVoice . The sherpa-onnx runtime is
 Apache-2.0: https://github.com/k2-fsa/sherpa-onnx .
+
+The Windows desktop installer (desktop/) additionally bundles, unmodified:
+mpv (https://mpv.io , GPL-2.0-or-later; Windows build by shinchiro,
+https://github.com/shinchiro/mpv-winbuild-cmake , release 20261111, whose
+build scripts and component sources are linked from that repository);
+FFmpeg (https://ffmpeg.org , GPL-3.0 build by gyan.dev,
+https://www.gyan.dev/ffmpeg/builds/ ; sources at https://ffmpeg.org/download.html);
+a portable CPython 3.12 runtime (python-build-standalone,
+https://github.com/astral-sh/python-build-standalone , PSF license and the
+licenses of its bundled libraries); PyTorch, ONNX Runtime, sherpa-onnx, RUAccent
+and their Python dependencies under their own licenses (see each package's
+metadata in runtime/Lib/site-packages). These programs run as separate
+processes or libraries of the bundled engine; Synchro's MIT license does not
+apply to them. Model weights retain the licenses listed above.

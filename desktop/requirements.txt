@@ -1,0 +1,6 @@
+# Engine packages bundled with the desktop player (installed after the CPU build of torch).
+# Same as server/requirements-host.txt without faster-whisper: the desktop app ships no Whisper model.
+-r ../server/requirements.txt
+onnx-asr==0.12.0
+onnxruntime==1.31.1
+ruaccent==1.5.8.3

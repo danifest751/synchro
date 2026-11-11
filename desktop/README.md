@@ -5,8 +5,17 @@ server code in host mode) recognizes speech, marks stress and speaks on this com
 translation goes to the provider set in the window: OpenRouter, Kilo Gateway, OpenAI, or any OpenAI-compatible
 address (for example a local LM Studio or Ollama server).
 
-Status: player logic, engine start-up and the engine's `/api/file` work end to end (`--self-test`); playback with
-mpv and the installer that bundles Python, models, FFmpeg and mpv are next.
+Video languages: English (GigaAM), Chinese, Korean and Japanese (SenseVoice). Voices: five Silero V5 CIS voices.
+Requires a 64-bit CPU with AVX2 (Intel 2013+, AMD 2015+); about 4 GB of disk space.
+
+## Use
+
+Install, start Synchro, choose a provider and paste its key, then **Open video…** (or *Open with → Synchro* in
+Explorer). Playback waits until the first ten seconds are translated and keeps about half a minute ahead.
+mpv's own controls work as usual: Space pauses, arrows seek, F toggles full screen. A seek translates again from
+the new position.
+
+Files: settings `%APPDATA%\Synchro\settings.json`; logs `%LOCALAPPDATA%\Synchro\engine.log` and `player.log`.
 
 ## Development
 
@@ -19,6 +28,17 @@ cargo run --manifest-path desktop/Cargo.toml -- --self-test a.mp4 # engine + two
 cargo test --manifest-path desktop/Cargo.toml
 ```
 
-Settings are stored in `%APPDATA%\Synchro\settings.json`; the engine log in `%LOCALAPPDATA%\Synchro\engine.log`.
-The engine runs on loopback with a random key and ends with the player (Windows job object). Builds target
-x86-64-v3 (AVX2).
+## Building the installer
+
+```powershell
+python desktop/build_bundle.py --test-video a.mp4
+```
+
+The script downloads the portable CPython 3.12 runtime (SHA-256 pinned), installs the CPU build of PyTorch and
+`desktop/requirements.txt` into it, copies the engine code, the models from `.local/host-models`, FFmpeg and mpv
+(the shinchiro x86_64-v3 build) from `.local/host-tools`, builds `Synchro.exe`, runs `--self-test` on the finished
+folder and compiles `installer.iss` with Inno Setup 6. Output: `desktop/dist/Synchro` (the installed layout) and
+`desktop/dist/installer` (setup plus `.bin` parts, because the payload exceeds 2 GB). The installer is per-user
+and needs no administrator rights.
+
+The engine runs on loopback with a random key; the engine and mpv end with the player (Windows job object).
