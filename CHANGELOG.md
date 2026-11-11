@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.4 — 2026-11-11
+
+- Replaced Xenia/Aidar/Eugene and the optional VoiceStudio voices with five Silero V5 CIS voices (Roman, Eduard, Albina, Alexander, Alfia); legacy voice IDs map to them. RUAccent marks stress on the host worker and through the gateway accent service.
+- A failed or timed-out window no longer ends the session: it stays pending, and the extension retries network errors and 409/502/503/504 three times. `/next` and `/chunk` are idempotent, so a response lost in transit is sent again instead of skipping audio.
+- A dropped YouTube audio stream reconnects inside FFmpeg and otherwise resumes at the exact received position with a freshly resolved URL.
+- Closing or seeking cancels work in progress immediately; starting a session replaces the previous session of the same key instead of returning 409.
+- A recent successful model warmup is reused for five minutes, making seeks faster; window failures clear it.
+- Latin names and digits that survive the translation retry are transliterated and spelled out in Russian; a failed stress lookup speaks unmarked text. Neither stops playback.
+- Local model requests time out after 60 seconds with connection retries; GigaAM and Silero workers queue requests in-process; the gateway logs per-window stage timings without content.
+- Kilo HY-MT2 empty answers fall back to Gemma for the same window; phrase alignment repairs a wrong boundary count once.
+
 ## 0.4.1 — 2026-11-10
 
 - Added searchable Kilo/OpenRouter model catalogs, translation-first ordering, and highlighted selection.

@@ -18,11 +18,11 @@ Browser video and server audio use different network paths. Inspect gateway logs
 
 Use `deploy/Caddyfile` as the reference for `transport http { keepalive off }`. Uvicorn or an SSH tunnel can close an idle upstream connection before the proxy does. Validate and reload Caddy after changing it; this server-side fix does not require reinstalling the extension.
 
-For continuing 502s, inspect the gateway error and the model services separately. Check speech and translation timeouts, a truncated YouTube stream, GPU memory, and service availability. After a failed stream, close translation and restart it.
+For continuing 502s, inspect the gateway error and the model services separately. Check speech and translation timeouts, a truncated YouTube stream, GPU memory, and service availability. The extension retries a failed window three times, and the gateway resumes a dropped YouTube audio stream from the exact position up to three times per window. The gateway log records `youtube_audio outcome=resume` and per-window stage timings (`window ... asr= translation= alignment= speech= total=`). If errors persist, press Retry translation.
 
 ## Session occupied or server full
 
-One key permits one active session. Close the previous translation, or wait about two minutes for an idle session to expire. Issue separate guest keys for different viewers. The default shared cap is three; increasing it does not make inference faster. Measure the complete pipeline before raising capacity.
+One key holds one session; starting translation again replaces the previous session of that key, including one left by a closed tab. Issue separate guest keys for different viewers. The default shared cap is three; increasing it does not make inference faster. Measure the complete pipeline before raising capacity.
 
 ## Speech starts late, pauses, or feels disconnected
 

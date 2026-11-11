@@ -24,6 +24,8 @@ The extension uses Manifest V3, activeTab, tabCapture, offscreen, storage, scrip
 
 `server/synchro/app.py` is a FastAPI gateway. It authenticates each request, enforces exact browser Origin, limits sessions, tracks ownership, and expires inactive sessions. Sessions and rate-limit counters live in process memory, so run one Uvicorn worker. Restarting the gateway ends active sessions.
 
+Failures are contained to one window. Processing changes the session only after every stage succeeds, so a failed window stays pending and a repeated request processes the same audio; a repeated request after a lost response receives the stored result. The YouTube decoder reconnects inside FFmpeg and, if the stream still ends early, is restarted at the exact received position with a freshly resolved media URL. A missing stress mark speaks unmarked text, and Latin letters or digits that survive the translation retry are transliterated and spelled out in Russian instead of stopping playback. Closing or replacing a session cancels its work immediately.
+
 `server/synchro/youtube.py` accepts validated YouTube URLs, resolves audio with yt-dlp, checks CDN access, and decodes audio with FFmpeg. Source URLs and video contents are not logged by its helper. No browser cookies are imported. A working server-side route to YouTube is required independently of the browser's ability to play video.
 
 `server/synchro/pipeline.py` recognizes speech, translates text, synthesizes speech, joins WAV parts, normalizes loudness, and adjusts tempo. The translation API supports llama.cpp's OpenAI-compatible endpoint or Ollama's native endpoint; it requires structured JSON output.

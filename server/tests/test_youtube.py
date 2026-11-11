@@ -1,6 +1,7 @@
 import asyncio
 import unittest
 import sys
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from synchro.youtube import YoutubeAudio, youtube_url, discard_errors
@@ -70,3 +71,36 @@ class YoutubeTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ValueError, 'before the video'):
             await audio.next()
         await audio.close()
+
+    async def test_dropped_stream_resumes_at_the_exact_position(self):
+        def process(data, code):
+            stdout = asyncio.StreamReader()
+            stdout.feed_data(data)
+            stdout.feed_eof()
+            async def wait():
+                return code
+            return SimpleNamespace(returncode=code, stdout=stdout, wait=wait)
+
+        pcm = bytes(range(256)) * (24 * 32000 // 256)
+        # The CDN connection drops after 4 seconds; the resumed decoder continues from there.
+        reopen = AsyncMock(return_value=(process(pcm[4 * 32000:], 0), asyncio.create_task(asyncio.sleep(0))))
+        audio = YoutubeAudio(process(pcm[:4 * 32000], 1), asyncio.create_task(asyncio.sleep(0)), 124, 100, reopen)
+        first, final = await audio.next()
+        self.assertEqual((first, final), (pcm[:11 * 32000], False))
+        reopen.assert_awaited_once_with(104.0)
+        last, final = await audio.next()
+        self.assertEqual((last, final), (pcm[10 * 32000:], True))
+
+    async def test_repeated_drops_end_with_an_error(self):
+        def dropped(*args):
+            stdout = asyncio.StreamReader()
+            stdout.feed_eof()
+            async def wait():
+                return 1
+            return SimpleNamespace(returncode=1, stdout=stdout, wait=wait), asyncio.create_task(asyncio.sleep(0))
+
+        reopen = AsyncMock(side_effect=dropped)
+        audio = YoutubeAudio(*dropped(), 100, 0, reopen)
+        with self.assertRaisesRegex(ValueError, 'interrupted'):
+            await audio.next()
+        self.assertEqual(reopen.await_count, 3)

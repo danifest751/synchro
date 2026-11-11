@@ -7,7 +7,7 @@ Watch English videos with synchronized Russian voiceover, powered by models on y
 
 Synchro is a Manifest V3 browser extension and a Python backend. On YouTube, video stays in the native player while the server fetches and translates the audio track. A small playback buffer gives local speech recognition, translation, and speech synthesis time to work.
 
-**Status: prototype 0.4.3.** English → Russian is the implemented language pair. The interface and documentation are in English. This repository does not provide a hosted service, access keys, or model weights. Choose local processing, cloud text translation, or a fully cloud AI pipeline; see [cloud modes](docs/CLOUD.md). Optional [CPU speech on the browser's computer](docs/HOST.md) avoids a remote speech server. Optional [GitHub extension updates](docs/UPDATES.md) preserve installed connection settings.
+**Status: prototype 0.4.4.** English → Russian is the implemented language pair. The interface and documentation are in English. This repository does not provide a hosted service, access keys, or model weights. Choose local processing, cloud text translation, or a fully cloud AI pipeline; see [cloud modes](docs/CLOUD.md). Optional [CPU speech on the browser's computer](docs/HOST.md) avoids a remote speech server. Optional [GitHub extension updates](docs/UPDATES.md) preserve installed connection settings.
 
 ## Features
 

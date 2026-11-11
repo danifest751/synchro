@@ -24,6 +24,7 @@ class AccessTests(unittest.IsolatedAsyncioTestCase):
         api.CLIENTS_FILE = str(self.tokens)
         api.sessions.clear()
         api.requests.clear()
+        api.warm.clear()
         self.client = httpx.AsyncClient(transport=httpx.ASGITransport(app=api.app), base_url='http://test')
 
     async def asyncTearDown(self):
@@ -58,10 +59,10 @@ class AccessTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(after.status_code, 401)
 
     async def test_capacity_is_shared_but_one_key_cannot_take_two_places(self):
-        await api.reserve('alice', 'female')
-        with self.assertRaises(api.HTTPException) as duplicate:
-            await api.reserve('alice', 'male')
-        self.assertEqual(duplicate.exception.status_code, 409)
+        first = await api.reserve('alice', 'female')
+        second = await api.reserve('alice', 'male')
+        self.assertEqual(list(api.sessions), [second.id])
+        self.assertTrue(first.closed)
         await api.reserve('bob', 'male')
         await api.reserve('carol', 'female')
         with self.assertRaises(api.HTTPException) as full:
@@ -120,11 +121,64 @@ class AccessTests(unittest.IsolatedAsyncioTestCase):
         from types import SimpleNamespace
         current = await api.reserve('alice', 'female')
         current.audio = SimpleNamespace(step=160000, next=AsyncMock(return_value=(b'pcm', False)), close=AsyncMock())
-        with patch.object(api.pipeline, 'process', new=AsyncMock(side_effect=TimeoutError)):
+        result = {'session_id': current.id, 'ready_until': 10, 'finished': False, 'segments': []}
+        with patch.object(api.pipeline, 'process', new=AsyncMock(side_effect=[TimeoutError, result])) as process:
             response = await self.client.post('/api/video/' + current.id + '/next', headers=self.headers('alice'))
-        self.assertEqual(response.status_code, 504)
-        self.assertTrue(current.failed)
-        self.assertFalse(current.lock.locked())
-        self.assertEqual(current.offset, 0)
+            self.assertEqual(response.status_code, 504)
+            self.assertFalse(current.lock.locked())
+            self.assertEqual(current.offset, 0)
+            self.assertEqual(current.pending, (b'pcm', False, 160000))
+            retry = await self.client.post('/api/video/' + current.id + '/next', headers=self.headers('alice'))
+        self.assertEqual(retry.status_code, 200, retry.text)
+        # The retry repeats the same audio instead of reading past it.
+        current.audio.next.assert_awaited_once()
+        self.assertEqual(process.await_args_list[1].args[1:], (b'pcm', 0, False))
+        self.assertIsNone(current.pending)
         deleted = await self.client.delete('/api/session/' + current.id, headers=self.headers('alice'))
         self.assertEqual(deleted.status_code, 204)
+
+    async def test_lost_window_response_is_sent_again(self):
+        from types import SimpleNamespace
+        current = await api.reserve('alice', 'female')
+        current.audio = SimpleNamespace(step=160000, next=AsyncMock(return_value=(b'pcm', False)), close=AsyncMock())
+
+        async def process(session, *args, **kwargs):
+            session.offset += 160000
+            return {'session_id': session.id, 'ready_until': session.offset / 16000, 'finished': False, 'segments': []}
+
+        with patch.object(api.pipeline, 'process', new=AsyncMock(side_effect=process)) as mocked:
+            first = await self.client.post('/api/video/' + current.id + '/next?ready=0', headers=self.headers('alice'))
+            again = await self.client.post('/api/video/' + current.id + '/next?ready=0', headers=self.headers('alice'))
+            following = await self.client.post('/api/video/' + current.id + '/next?ready=10', headers=self.headers('alice'))
+        self.assertEqual(again.json(), first.json())
+        self.assertEqual(following.json()['ready_until'], 20)
+        self.assertEqual(mocked.await_count, 2)
+        self.assertEqual(current.audio.next.await_count, 2)
+
+    async def test_closing_cancels_a_window_in_progress(self):
+        import asyncio
+        from types import SimpleNamespace
+        current = await api.reserve('alice', 'female')
+        current.audio = SimpleNamespace(step=160000, next=AsyncMock(return_value=(b'pcm', False)), close=AsyncMock())
+        started = asyncio.Event()
+
+        async def stalled(*args, **kwargs):
+            started.set()
+            await asyncio.sleep(3600)
+
+        with patch.object(api.pipeline, 'process', new=stalled):
+            window = asyncio.create_task(self.client.post('/api/video/' + current.id + '/next', headers=self.headers('alice')))
+            await started.wait()
+            deleted = await asyncio.wait_for(self.client.delete('/api/session/' + current.id, headers=self.headers('alice')), 2)
+            response = await asyncio.wait_for(window, 2)
+        self.assertEqual(deleted.status_code, 204)
+        self.assertEqual(response.status_code, 409)
+        self.assertNotIn(current.id, api.sessions)
+
+    async def test_recent_warmup_is_reused_by_the_next_session(self):
+        with patch.object(api.pipeline, 'warmup', new=AsyncMock()) as warmup:
+            for _ in range(2):
+                response = await self.client.post('/api/session', headers=self.headers('alice'), json={'voice': 'roman'})
+                self.assertEqual(response.status_code, 200, response.text)
+            await self.client.post('/api/session', headers=self.headers('alice'), json={'voice': 'albina'})
+        self.assertEqual([call.args[0] for call in warmup.await_args_list], ['roman', 'albina'])

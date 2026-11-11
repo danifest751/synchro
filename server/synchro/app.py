@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import json
 import logging
+import math
 import os
 from pathlib import Path
 import re
@@ -12,13 +13,13 @@ import time
 from typing import Literal
 import uuid
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from .pipeline import Pipeline, Session, WINDOW
+from .pipeline import Pipeline, Session, STEP, WINDOW
 from .youtube import YoutubeAudio, youtube_url
 from .cloud import TranslationSettings
 from .catalog import CatalogRequest, ProviderCatalog
@@ -48,9 +49,14 @@ sessions = {}
 registry_lock = asyncio.Lock()
 warmup_lock = asyncio.Lock()
 requests = defaultdict(deque)
+warm = {}
 
 
 async def discard(current):
+    # Closing must not wait for a window that can take up to the 105-second deadline.
+    current.closed = True
+    if current.work:
+        current.work.cancel()
     async with current.lock:
         current.finished = True
         if current.audio:
@@ -141,12 +147,9 @@ def owned(session_id, owner):
 async def reserve(owner, voice, translation=None):
     async with registry_lock:
         await reap()
-        for current in list(sessions.values()):
-            if current.owner == owner:
-                if not current.lock.locked() and (current.finished or current.failed):
-                    await discard(current)
-                else:
-                    raise HTTPException(409, 'This key already has an active session. Close translation first')
+        # One key holds one place: a seek, reload or second tab replaces the previous session.
+        for current in [item for item in sessions.values() if item.owner == owner]:
+            await discard(current)
         if len(sessions) >= MAX_SESSIONS:
             raise HTTPException(503, f'All {MAX_SESSIONS} slots are occupied. Try again when a viewer finishes')
         current = Session(id=uuid.uuid4().hex, touched=time.monotonic(), voice=voice, owner=owner,
@@ -155,9 +158,82 @@ async def reserve(owner, voice, translation=None):
         return current
 
 
+async def exclusive(current, coroutine):
+    """Run session work as a task that discard() can cancel."""
+    if current.closed:
+        coroutine.close()
+        raise HTTPException(409, 'Translation was closed')
+    current.work = asyncio.ensure_future(coroutine)
+    try:
+        return await current.work
+    except asyncio.CancelledError:
+        if asyncio.current_task().cancelling():
+            raise
+        raise HTTPException(409, 'Translation was closed') from None
+    finally:
+        current.work = None
+
+
+async def warm_models(voice, translation):
+    # Every seek starts a session; skip a full model round trip that succeeded moments ago.
+    key = (voice, translation.mode, translation.provider, translation.model,
+           hashlib.sha256(translation.api_key.get_secret_value().encode()).hexdigest())
+    if time.monotonic() - warm.get(key, -math.inf) < 300:
+        return
+    async with warmup_lock:
+        await pipeline.warmup(voice, translation)
+    if len(warm) >= 64:
+        warm.clear()
+    warm[key] = time.monotonic()
+
+
+async def warm_session(current):
+    with collect_usage(current.usage):
+        await warm_models(current.voice, current.translation)
+    current.touched = time.monotonic()
+
+
+async def open_video(current, url, position):
+    current.audio = await YoutubeAudio.open(url, position)
+    await warm_session(current)
+    current.offset = round(current.audio.base * 16000)
+
+
+async def window_result(current, pcm, offset, final, step=STEP):
+    with collect_usage(current.usage):
+        result = await pipeline.process(current, pcm, offset, final, step=step)
+    result = {**result, 'cloud_usage': usage_summary(current.usage)}
+    current.last = (offset, result)
+    return result
+
+
+def replay(current, offset):
+    # The client lost the previous response and asks for the same window again.
+    return current.last[1] if current.last and current.last[0] == offset else None
+
+
+async def next_video_window(current, ready=None):
+    if ready is not None and (repeated := replay(current, round(ready * 16000))):
+        return repeated
+    # A failed window stays pending: retrying the request repeats it instead of skipping audio.
+    if current.pending is None:
+        step = current.audio.step
+        pcm, final = await current.audio.next()
+        current.pending = (pcm, final, step)
+    pcm, final, step = current.pending
+    if not pcm:
+        current.finished = True
+        result = {'session_id': current.id, 'segments': [], 'ready_until': current.offset / 16000, 'finished': True}
+        current.last = (current.offset, result)
+    else:
+        result = await window_result(current, pcm, current.offset, final, step=step)
+    current.pending = None
+    return result
+
+
 @app.get('/health')
 async def health():
-    return {'service': 'synchro', 'version': '0.4.3', 'max_sessions': MAX_SESSIONS}
+    return {'service': 'synchro', 'version': '0.4.4', 'max_sessions': MAX_SESSIONS}
 
 
 @app.get('/api/check')
@@ -178,10 +254,8 @@ async def start(body: SessionRequest | None = None, voice: Voice = 'female', own
     selected = body or SessionRequest(voice=voice)
     current = await reserve(owner, selected.voice, selected.translation)
     try:
-        async with current.lock, asyncio.timeout(105), warmup_lock:
-            with collect_usage(current.usage):
-                await pipeline.warmup(current.voice, current.translation)
-                current.touched = time.monotonic()
+        async with current.lock, asyncio.timeout(105):
+            await exclusive(current, warm_session(current))
     except Exception as error:
         await discard(current)
         raise HTTPException(503, str(error) if isinstance(error, ValueError) else 'Could not warm up models. Check the server services')
@@ -207,21 +281,21 @@ async def chunk(session_id: str, request: Request, owner=Depends(authenticate)):
         body.extend(part)
     if current.lock.locked():
         raise HTTPException(409, 'The previous window is still processing')
+    if repeated := replay(current, offset):
+        return repeated
     async with current.lock:
+        # A failed window leaves the session unchanged, so the client can resend the same offset.
         try:
             async with asyncio.timeout(105):
-                with collect_usage(current.usage):
-                    result = await pipeline.process(current, bytes(body), offset, final)
-                return {**result, 'cloud_usage': usage_summary(current.usage)}
-        except ValueError as error:
-            current.failed = True
-            raise HTTPException(422, str(error))
+                return await exclusive(current, window_result(current, bytes(body), offset, final))
+        except HTTPException:
+            raise
         except TimeoutError:
-            current.failed = True
-            raise HTTPException(504, 'Audio translation timed out after 105 seconds; retry translation')
-        except Exception:
-            current.failed = True
-            raise HTTPException(502, 'Local model error; start a new session')
+            warm.clear()
+            raise HTTPException(504, 'Audio translation timed out after 105 seconds')
+        except Exception as error:
+            warm.clear()
+            raise HTTPException(502, str(error) if isinstance(error, ValueError) else 'Local model error; check the server services')
         finally:
             current.touched = time.monotonic()
 
@@ -246,12 +320,7 @@ async def start_video(body: VideoRequest, owner=Depends(authenticate)):
     current = await reserve(owner, body.voice, body.translation)
     try:
         async with current.lock, asyncio.timeout(105):
-            current.audio = await YoutubeAudio.open(url, body.position)
-            async with warmup_lock:
-                with collect_usage(current.usage):
-                    await pipeline.warmup(body.voice, current.translation)
-            current.offset = round(current.audio.base * 16000)
-            current.touched = time.monotonic()
+            await exclusive(current, open_video(current, url, body.position))
     except Exception as error:
         await discard(current)
         raise HTTPException(502, str(error) if isinstance(error, ValueError) else 'Could not prepare audio or models')
@@ -317,7 +386,9 @@ async def video_status(session_id: str, owner=Depends(authenticate)):
 
 
 @app.post('/api/video/{session_id}/next')
-async def video_next(session_id: str, owner=Depends(authenticate)):
+async def video_next(session_id: str, ready: float | None = Query(default=None, ge=0, allow_inf_nan=False),
+                     owner=Depends(authenticate)):
+    # ready is the client's ready_until; it lets a repeated request receive a lost response again.
     current = owned(session_id, owner)
     if not current.audio:
         raise HTTPException(409, 'This session does not use YouTube audio')
@@ -326,20 +397,15 @@ async def video_next(session_id: str, owner=Depends(authenticate)):
     async with current.lock:
         try:
             async with asyncio.timeout(105):
-                step = current.audio.step
-                pcm, final = await current.audio.next()
-                if not pcm:
-                    current.finished = True
-                    return {'session_id': current.id, 'segments': [], 'ready_until': current.offset / 16000, 'finished': True}
-                with collect_usage(current.usage):
-                    result = await pipeline.process(current, pcm, current.offset, final, step=step)
-                return {**result, 'cloud_usage': usage_summary(current.usage)}
+                return await exclusive(current, next_video_window(current, ready))
+        except HTTPException:
+            raise
         except TimeoutError:
-            current.failed = True
+            warm.clear()
             logging.getLogger('uvicorn.error').warning('video_translation outcome=deadline offset_seconds=%.1f provider=%s model=%s', current.offset / 16000, current.translation.provider, current.translation.model)
-            raise HTTPException(504, 'Audio translation timed out after 105 seconds; retry translation')
+            raise HTTPException(504, 'Audio translation timed out after 105 seconds')
         except Exception as error:
-            current.failed = True
+            warm.clear()
             logging.getLogger('uvicorn.error').warning('video_translation outcome=failed offset_seconds=%.1f provider=%s model=%s error_type=%s', current.offset / 16000, current.translation.provider, current.translation.model, type(error).__name__)
             raise HTTPException(502, str(error) if isinstance(error, ValueError) else 'Audio stream translation failed')
         finally:

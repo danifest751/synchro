@@ -1,4 +1,4 @@
-import {youtubeControl} from './youtube-offscreen.mjs';
+import {retried, youtubeControl} from './youtube-offscreen.mjs';
 import {serverBase} from './connection.mjs';
 import {translationSettings} from './translation.mjs';
 const channel = new BroadcastChannel('synchro-player');
@@ -23,7 +23,7 @@ async function api(path, options = {}) {
     headers: {Authorization: `Bearer ${config.token}`, ...options.headers}, signal: AbortSignal.timeout(120000)});
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
-    throw new Error(typeof body.detail === 'string' ? body.detail : `Server: ${response.status}`);
+    throw Object.assign(new Error(typeof body.detail === 'string' ? body.detail : `Server: ${response.status}`), {status: response.status});
   }
   return response.status === 204 ? null : response.json();
 }
@@ -45,8 +45,9 @@ async function drain(final = false) {
       const isFinal = final && pcm.length <= 128000;
       const count = Math.min(128000, pcm.length);
       const input = pcm.slice(0, count);
-      const result = await api(`/api/session/${sessionId}/chunk`, {method: 'POST', body: input.buffer,
-        headers: {'Content-Type': 'application/octet-stream', 'X-Offset': String(offset), 'X-Final': isFinal ? '1' : '0'}});
+      // A failed window leaves the server session unchanged, so the same offset can be resent.
+      const result = await retried(() => api(`/api/session/${sessionId}/chunk`, {method: 'POST', body: input.buffer,
+        headers: {'Content-Type': 'application/octet-stream', 'X-Offset': String(offset), 'X-Final': isFinal ? '1' : '0'}}));
       if (result.session_id !== sessionId) throw new Error('Response belongs to another session');
       for (const {wav, ...cue} of result.segments) {
         const bytes = Uint8Array.from(atob(wav), char => char.charCodeAt(0));

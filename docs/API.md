@@ -6,7 +6,7 @@ Base URL: the operator-configured loopback or HTTPS origin. All session state be
 
 Except for `/health`, send `Authorization: Bearer <personal-key>`. Browser requests must have the exact configured `Origin: chrome-extension://<extension-id>`. Non-browser clients may omit Origin; a matching key is still required. Never put credentials in a URL.
 
-The owner key is configured directly. Guest keys are matched against SHA-256 hashes in the registry, which is re-read on every authenticated request. Each key can own one active session. Default global capacity is three sessions, shared by both playback modes. The per-key limit is 120 authenticated requests per minute. Idle unlocked sessions expire after 120 seconds; a janitor checks every ten seconds.
+The owner key is configured directly. Guest keys are matched against SHA-256 hashes in the registry, which is re-read on every authenticated request. Each key owns at most one session; creating another session for the same key closes the previous one, so a seek or reload never waits for an abandoned session to expire. Default global capacity is three sessions, shared by both playback modes. The per-key limit is 120 authenticated requests per minute. Idle unlocked sessions expire after 120 seconds; a janitor checks every ten seconds.
 
 ## Endpoints
 
@@ -41,7 +41,7 @@ Window and status responses also include `cloud_usage`, with cumulative `stages`
 
 `url` is a validated HTTPS YouTube video URL, at most 2048 characters. `position` is a finite nonnegative number in seconds and must precede the end of the video. `voice` is `roman`, `eduard`, `albina`, `alexandr`, or `alfia`. The legacy IDs `female`, `male`, and `male-eugene` select Albina, Roman, and Eduard in local speech modes, and Nova, Onyx, and Echo in full cloud mode. Only recorded public videos are supported.
 
-The response contains `session_id`, `base` (actual starting position), and `duration` in seconds. Fetch windows sequentially with `/next`; do not issue concurrent requests for the same session. Close the session on cancellation and start a new one after seeking or changing voices.
+The response contains `session_id`, `base` (actual starting position), and `duration` in seconds. Fetch windows sequentially with `/next?ready=<ready_until>`, passing the `ready_until` of the previous response (or `base` for the first window); do not issue concurrent requests for the same session. Close the session on cancellation and start a new one after seeking or changing voices.
 
 ### Create a capture session
 
@@ -96,13 +96,13 @@ FastAPI errors usually return `{"detail":"message"}`; request-validation errors 
 | 400 | Invalid window metadata |
 | 401 / 403 | Invalid key / rejected browser Origin |
 | 404 | Missing session or another viewer's session |
-| 409 | Key already in use, request already processing, or wrong session mode |
+| 409 | Request already processing, session closed while processing, or wrong session mode |
 | 413 | Audio window exceeds its size limit |
 | 422 | Invalid input, timing sequence, or rejected video URL |
 | 429 | Per-key request rate exceeded |
 | 502 | YouTube, inference, or audio processing failed |
 | 503 | Capacity full, key registry unavailable, or model warmup failed |
 
-The gateway model client timeout is 90 seconds. Session creation and each audio window have a 105-second total budget; an expired window returns 504 without advancing its committed frontier. Reverse proxies should allow at least 120 seconds for response headers. Warm models and preload weights before accepting viewers.
+Local model requests time out after 60 seconds (5 seconds to connect, with two connection retries). Session creation and each audio window have a 105-second total budget. A failed or expired window returns 502/504 without advancing its committed frontier and stays pending: repeating the request processes the same audio again. Deleting a session cancels a window in progress. A successful model warmup is reused for five minutes by new sessions with the same voice and translation settings; any window failure clears that cache. Reverse proxies should allow at least 120 seconds for response headers. Warm models and preload weights before accepting viewers.
 
-YouTube `/next` commits ten seconds on its first non-final response and twenty seconds afterward, with a one-second recognition overlap. Capture `/chunk` keeps the window and step sizes returned by `/api/session`. Do not blindly retry `/next` after losing its response: it is not idempotent and another call reads another audio window. Cloud-only retries happen inside the current window before it is committed.
+YouTube `/next` commits ten seconds on its first non-final response and twenty seconds afterward, with a one-second recognition overlap. Capture `/chunk` keeps the window and step sizes returned by `/api/session`. Both calls are safe to repeat. If a response is lost after the server committed the window, `/next` with the same `ready` value, or `/chunk` with the same `X-Offset`, returns the stored response instead of skipping audio. The extension retries network errors and 409/502/503/504 three times. Cloud-only retries also happen inside the current window before it is committed.

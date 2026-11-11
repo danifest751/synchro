@@ -70,6 +70,43 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await pipeline.client.aclose()
 
+    async def test_persistent_latin_is_transliterated_instead_of_stopping_playback(self):
+        pipeline = Pipeline('http://speech', 'http://llama', api='llama', silero_url='http://silero')
+        await pipeline.client.aclose()
+        pipeline.client = httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200,
+            json={'choices': [{'message': {'content': json.dumps({'translation': 'ChatGPT от OpenAI за 2026 год.'})}}]})))
+        try:
+            self.assertEqual(await pipeline.translate('ChatGPT by OpenAI in 2026', [], 5),
+                             'Чатгпт от Опенаи за две тысячи двадцать шесть год.')
+        finally:
+            await pipeline.client.aclose()
+
+    def test_fallback_spelling_reads_numbers_and_acronyms(self):
+        from synchro.stress import cyrillic_spelling, number_words
+        cases = {0: 'ноль', 11: 'одиннадцать', 21000: 'двадцать одна тысяча', 1_002_000: 'один миллион две тысячи',
+                 115: 'сто пятнадцать', 5_000_000_000: 'пять миллиардов'}
+        for number, words in cases.items():
+            self.assertEqual(number_words(number), words)
+        self.assertEqual(cyrillic_spelling('NASA и GPU4, 3.5 раза'), 'эн эй эс эй и джи пи ю четыре, три. пять раза')
+        self.assertEqual(cyrillic_spelling('Tesla Shrek'), 'Тесла Шрек')
+
+    async def test_failed_stress_service_still_speaks_unmarked_text(self):
+        pipeline = Pipeline('http://speech', 'http://llama', silero_url='http://silero', silero_token='internal-tts-key')
+        await pipeline.client.aclose()
+        seen = []
+        def respond(request):
+            if request.url.path == '/accent':
+                return httpx.Response(503)
+            seen.append(json.loads(request.content)['text'])
+            return httpx.Response(200, content=wav_bytes(b'\0\1' * 48000, 48000))
+        pipeline.client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+        try:
+            with patch('synchro.pipeline.normalize_wav', new=AsyncMock(side_effect=lambda data: data)):
+                await pipeline.speak('Два плюс два.', 'roman')
+            self.assertEqual(seen, ['Два плюс два.'])
+        finally:
+            await pipeline.client.aclose()
+
     async def test_accent_service_cannot_change_e_to_yo(self):
         pipeline = Pipeline('http://speech', 'http://llama')
         await pipeline.client.aclose()
@@ -280,8 +317,8 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         await pipeline.client.aclose()
         pipeline.client = httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200, json={'text': 'Друг+ие слов+а'})))
         try:
-            with self.assertRaises(ValueError):
-                await pipeline.accentuate('Исходный текст')
+            # Changed words are rejected; the original text is spoken without stress marks.
+            self.assertEqual(await pipeline.accentuate('Исходный текст'), 'Исходный текст')
         finally:
             await pipeline.client.aclose()
 

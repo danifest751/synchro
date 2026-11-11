@@ -100,7 +100,12 @@ class HostPipeline(Pipeline):
         if self.host_accent is None:
             self.host_accent = load_host_accent()
         spoken = spoken_text(text)
-        marked = silero_marks(preserve_stress(spoken, self.host_accent.process_all(spoken)))
+        try:
+            marked = silero_marks(preserve_stress(spoken, self.host_accent.process_all(spoken)))
+        except Exception:
+            # Unmarked words are still spoken; an unusual phrase must not stop playback.
+            logging.getLogger('uvicorn.error').warning('host_stress outcome=unmarked_fallback')
+            marked = spoken
         audio = self.host_tts.apply_tts(text=marked, speaker=SILERO_VOICES[voice], sample_rate=48000,
             put_accent=False, put_yo=False)
         pcm = (audio.detach().cpu().clamp(-1, 1).numpy() * 32767).astype('<i2').tobytes()

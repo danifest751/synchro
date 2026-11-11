@@ -1,6 +1,7 @@
 """Fetch the original audio track without capturing the tab."""
 import asyncio
 import json
+import logging
 import math
 import os
 import re
@@ -37,13 +38,16 @@ async def discard_errors(reader):
 
 
 class YoutubeAudio:
-    def __init__(self, process, errors, duration, base):
+    def __init__(self, process, errors, duration, base, reopen=None):
         self.process, self.errors = process, errors
         self.duration, self.base = duration, base
         self.pending = b""
         self.eof = False
         self.received = 0
         self.step = 10 * RATE
+        # Async callable(position) -> (process, errors) that resumes a dropped CDN stream.
+        self.reopen = reopen
+        self.restarts = 0
 
     @classmethod
     async def open(cls, url: str, position: float):
@@ -56,21 +60,31 @@ class YoutubeAudio:
         proxy = os.environ.get("YTDLP_PROXY", "")
         if proxy:
             args += ["--proxy", proxy]
+
+        async def reopen(at):
+            # A signed media URL can expire during a long pause; resolve it again.
+            _metadata.pop(url, None)
+            return await cls.spawn(await cls.cached_info(args, url), at, proxy)
+
+        info = await cls.cached_info(args, url)
+        try:
+            return await cls.from_info(info, position, proxy, reopen)
+        except Exception:
+            _metadata.pop(url, None)
+            raise
+
+    @classmethod
+    async def cached_info(cls, args, url):
         # Serialize YouTube JavaScript challenges.
         async with _resolution_lock:
             cached = _metadata.get(url)
             if cached and time.monotonic() - cached[0] < 600:
-                info = cached[1]
-            else:
-                info = await cls.resolve(args, url)
-                if len(_metadata) >= 3:
-                    _metadata.pop(min(_metadata, key=lambda item: _metadata[item][0]))
-                _metadata[url] = (time.monotonic(), info)
-        try:
-            return await cls.from_info(info, position, proxy)
-        except Exception:
-            _metadata.pop(url, None)
-            raise
+                return cached[1]
+            info = await cls.resolve(args, url)
+            if len(_metadata) >= 3:
+                _metadata.pop(min(_metadata, key=lambda item: _metadata[item][0]))
+            _metadata[url] = (time.monotonic(), info)
+            return info
 
     @staticmethod
     async def resolve(args, url):
@@ -87,27 +101,33 @@ class YoutubeAudio:
             raise ValueError("YouTube did not return audio. Check connectivity; this video may require sign-in")
         return json.loads(raw)
 
+    @staticmethod
+    async def spawn(info, position, proxy):
+        media = urlsplit(info.get("url", ""))
+        if media.scheme != "https" or not (media.hostname or "").endswith(".googlevideo.com") or media.port not in (None, 443) or media.username:
+            raise ValueError("YouTube returned an unsupported audio source")
+        headers = info.get("http_headers", {})
+        agent = headers.get("User-Agent", "Mozilla/5.0")
+        if "\r" in agent or "\n" in agent:
+            raise ValueError("Invalid source header")
+        command = ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-xerror", "-rw_timeout", "30000000",
+                   # The CDN drops idle connections while playback is paused; continue from the same byte range.
+                   "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_on_network_error", "1", "-reconnect_delay_max", "4"]
+        if proxy:
+            command += ["-http_proxy", proxy]
+        command += ["-user_agent", agent, "-ss", str(position), "-i", info["url"], "-vn", "-ac", "1", "-ar", str(RATE), "-f", "s16le", "pipe:1"]
+        process = await asyncio.create_subprocess_exec(*command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        return process, asyncio.create_task(discard_errors(process.stderr))
+
     @classmethod
-    async def from_info(cls, info, position, proxy):
+    async def from_info(cls, info, position, proxy, reopen=None):
         if info.get("is_live"):
             raise ValueError("This mode supports recorded videos; live streams are not supported yet")
         duration = float(info.get("duration") or 0)
         if not math.isfinite(duration) or duration <= 0 or position >= duration:
             raise ValueError("Unknown duration or position beyond the end of the video")
-        media = urlsplit(info.get("url", ""))
-        if media.scheme != "https" or not (media.hostname or "").endswith(".googlevideo.com") or media.port not in (None, 443) or media.username:
-            raise ValueError("YouTube returned an unsupported audio source")
-        base = position
-        headers = info.get("http_headers", {})
-        agent = headers.get("User-Agent", "Mozilla/5.0")
-        if "\r" in agent or "\n" in agent:
-            raise ValueError("Invalid source header")
-        command = ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-xerror", "-rw_timeout", "30000000"]
-        if proxy:
-            command += ["-http_proxy", proxy]
-        command += ["-user_agent", agent, "-ss", str(base), "-i", info["url"], "-vn", "-ac", "1", "-ar", str(RATE), "-f", "s16le", "pipe:1"]
-        process = await asyncio.create_subprocess_exec(*command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        audio = cls(process, asyncio.create_task(discard_errors(process.stderr)), duration, base)
+        process, errors = await cls.spawn(info, position, proxy)
+        audio = cls(process, errors, duration, position, reopen)
         try:
             # Check CDN access before opening a browser session.
             audio.pending = await asyncio.wait_for(process.stdout.readexactly(3200), 35)
@@ -121,23 +141,36 @@ class YoutubeAudio:
         return audio
 
     async def next(self):
-        wanted = (self.step + RATE) * 2 - len(self.pending)
-        try:
-            block = await asyncio.wait_for(self.process.stdout.readexactly(wanted), 40)
-        except asyncio.IncompleteReadError as error:
-            block = error.partial
-            self.eof = True
-            await self.process.wait()
-            if self.process.returncode:
-                raise ValueError("YouTube stream interrupted; restart translation")
-        self.pending += block
-        self.received += len(block)
-        if self.eof and self.base + self.received / (RATE * 2) < self.duration - 2:
-            raise ValueError('Audio stream ended before the video. Check network access and any proxy or SSH tunnel')
+        wanted = (self.step + RATE) * 2
+        while len(self.pending) < wanted and not self.eof:
+            try:
+                block, ended = await asyncio.wait_for(self.process.stdout.readexactly(wanted - len(self.pending)), 40), False
+            except asyncio.IncompleteReadError as error:
+                block, ended = error.partial, True
+            # Keep audio read before a failure so a retried window loses nothing.
+            self.pending += block
+            self.received += len(block)
+            if ended:
+                await self.resume()
         result = self.pending
         self.pending = b"" if self.eof else result[self.step * 2:]
         self.step = 20 * RATE
+        self.restarts = 0
         return result, self.eof
+
+    async def resume(self):
+        await self.process.wait()
+        position = self.base + self.received / (RATE * 2)
+        if not self.process.returncode and position >= self.duration - 2:
+            self.eof = True
+            return
+        if not self.reopen or self.restarts >= 3:
+            raise ValueError("YouTube stream interrupted; restart translation" if self.process.returncode else
+                             "Audio stream ended before the video. Check network access and any proxy or SSH tunnel")
+        self.restarts += 1
+        logging.getLogger("uvicorn.error").warning("youtube_audio outcome=resume position=%.1f attempt=%d", position, self.restarts)
+        await self.errors
+        self.process, self.errors = await self.reopen(position)
 
     async def close(self):
         if self.process.returncode is None:

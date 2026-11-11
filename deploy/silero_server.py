@@ -1,11 +1,12 @@
 """Private Synchro CPU speech endpoint using locally installed Silero weights."""
 import hmac
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import io
 import json
 import logging
 import os
 import re
+import threading
 import wave
 
 SPEAKERS = {'ru_roman', 'ru_eduard', 'ru_albina', 'ru_alexandr', 'ru_alfia'}
@@ -62,8 +63,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             # Preserve the translated spelling; automatic yo substitution can change word meanings.
-            audio = self.server.model.apply_tts(text=text, speaker=voice, sample_rate=48000,
-                put_accent=False, put_yo=False)
+            with self.server.inference:
+                audio = self.server.model.apply_tts(text=text, speaker=voice, sample_rate=48000,
+                    put_accent=False, put_yo=False)
             pcm = (audio.detach().cpu().clamp(-1, 1).numpy() * 32767).astype('<i2').tobytes()
             output = io.BytesIO()
             with wave.open(output, 'wb') as wav:
@@ -74,8 +76,11 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(503, {'error': 'Synthesis failed'})
 
 
-class Server(HTTPServer):
-    request_queue_size = 3
+class Server(ThreadingHTTPServer):
+    # Viewers queue on the lock in the process, not in the kernel accept backlog.
+    daemon_threads = True
+    request_queue_size = 16
+    inference = threading.Lock()
 
     def get_request(self):
         connection, address = super().get_request()

@@ -1,10 +1,11 @@
 """Private PCM16/16k ASR endpoint; run separately from the shared Russian service."""
 import hmac
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import logging
 import math
 import os
+import threading
 
 
 def word_timestamps(tokens, timestamps, duration):
@@ -72,7 +73,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             import numpy as np
-            result = self.server.model.recognize(np.frombuffer(pcm, dtype='<i2').astype(np.float32) / 32768, sample_rate=16000)
+            with self.server.inference:
+                result = self.server.model.recognize(np.frombuffer(pcm, dtype='<i2').astype(np.float32) / 32768, sample_rate=16000)
             words = word_timestamps(result.tokens, result.timestamps, length / 32000)
             self.respond(200, {'text': result.text, 'words': words, 'language': 'en'})
         except Exception:
@@ -80,9 +82,11 @@ class Handler(BaseHTTPRequestHandler):
             self.respond(503, {'error': 'Recognition failed'})
 
 
-class Server(HTTPServer):
-    # One inference at a time; three viewers queue without multiplying CPU thread pools.
-    request_queue_size = 3
+class Server(ThreadingHTTPServer):
+    # Viewers queue on the lock in the process, not in the kernel accept backlog.
+    daemon_threads = True
+    request_queue_size = 16
+    inference = threading.Lock()
 
     def get_request(self):
         connection, address = super().get_request()
