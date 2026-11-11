@@ -64,7 +64,8 @@ class HostPipeline(Pipeline):
                 sess_options=options, providers=['CPUExecutionProvider']).with_timestamps()
         samples = np.frombuffer(pcm, dtype='<i2').astype(np.float32) / 32768
         result = self.host_asr.recognize(samples, sample_rate=RATE)
-        if re.search(r'[А-Яа-яЁё]', result.text) or not result.text.strip() and np.any(samples):
+        # Whisper is an optional install (the desktop app ships without it).
+        if os.environ.get('SYNCHRO_HOST_WHISPER_MODEL') and (re.search(r'[А-Яа-яЁё]', result.text) or not result.text.strip() and np.any(samples)):
             logging.getLogger('uvicorn.error').info('host_asr engine=whisper device=cpu reason=empty_or_alphabet')
             return self.whisper_cpu(pcm, 'en')
         # Reuse the worker's CTC decoder; run_host.py adds the repository to sys.path.

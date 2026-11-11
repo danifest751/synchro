@@ -33,6 +33,8 @@ TOKEN = os.environ.get('SYNCHRO_TOKEN', '')
 ORIGIN = os.environ.get('SYNCHRO_ORIGIN', '')
 CLIENTS_FILE = os.environ.get('SYNCHRO_CLIENTS_FILE', '')
 MAX_SESSIONS = int(os.environ.get('SYNCHRO_MAX_SESSIONS', '3'))
+# The desktop app runs this engine on loopback for one user and may open local files.
+DESKTOP = os.environ.get('SYNCHRO_DESKTOP') == '1'
 if not TOKEN or not re.fullmatch(r'chrome-extension://[a-p]{32}', ORIGIN):
     raise RuntimeError('SYNCHRO_TOKEN and the exact SYNCHRO_ORIGIN must be configured')
 
@@ -370,6 +372,32 @@ async def start_video(body: VideoRequest, owner=Depends(authenticate)):
             await exclusive(current, open_video(current, url, body.position))
     except Exception as error:
         failure('video_start', error)
+        await discard(current)
+        raise HTTPException(502, str(error) if isinstance(error, ValueError) else 'Could not prepare audio or models')
+    return {'session_id': current.id, 'base': current.audio.base, 'duration': current.audio.duration}
+
+
+class FileRequest(SessionRequest):
+    path: str = Field(max_length=4096)
+    position: float = Field(default=0, ge=0, allow_inf_nan=False)
+
+
+async def open_file(current, path, position):
+    current.audio = await YoutubeAudio.open_file(path, position)
+    await warm_session(current)
+    current.offset = round(current.audio.base * 16000)
+
+
+@app.post('/api/file')
+async def start_file(body: FileRequest, owner=Depends(authenticate)):
+    if not DESKTOP:
+        raise HTTPException(404, 'Not found')
+    current = await reserve(owner, body.voice, body.translation, body.language)
+    try:
+        async with current.lock, asyncio.timeout(105):
+            await exclusive(current, open_file(current, body.path, body.position))
+    except Exception as error:
+        failure('file_start', error)
         await discard(current)
         raise HTTPException(502, str(error) if isinstance(error, ValueError) else 'Could not prepare audio or models')
     return {'session_id': current.id, 'base': current.audio.base, 'duration': current.audio.duration}

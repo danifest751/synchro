@@ -1,6 +1,7 @@
 """Fixed-endpoint cloud translation; credentials belong to one playback session."""
 import asyncio
 import logging
+import os
 import time
 import uuid
 from typing import Literal
@@ -21,14 +22,20 @@ PROVIDERS = {
 
 class TranslationSettings(BaseModel):
     model_config = ConfigDict(extra='forbid')
-    provider: Literal['local', 'openai', 'kilo', 'openrouter'] = 'local'
+    provider: Literal['local', 'openai', 'kilo', 'openrouter', 'custom'] = 'local'
     mode: Literal['local', 'cloud_translation', 'cloud_all'] | None = None
     model: str = Field(default='', max_length=128, pattern=r'^[A-Za-z0-9_./:@+\-]*$')
     api_key: SecretStr = Field(default_factory=lambda: SecretStr(''))
+    # Any OpenAI-compatible chat endpoint (local LM Studio, Ollama, a proxy); desktop app only.
+    base_url: str = Field(default='', max_length=512)
 
     @model_validator(mode='after')
     def validate_key(self):
         self.mode = self.mode or ('local' if self.provider == 'local' else 'cloud_translation')
+        if self.provider == 'custom':
+            return self.validate_custom()
+        if self.base_url:
+            raise ValueError('A server address is only used by a custom OpenAI-compatible provider')
         if (self.mode == 'local') != (self.provider == 'local'):
             raise ValueError('Select a cloud provider for a cloud mode, or Local server for local mode')
         if '://' in self.model:
@@ -41,6 +48,20 @@ class TranslationSettings(BaseModel):
         else:
             self.api_key = SecretStr('')
             self.model = ''
+        return self
+
+    def validate_custom(self):
+        # A shared gateway must not be pointed at arbitrary addresses; the desktop engine serves one local user.
+        if os.environ.get('SYNCHRO_DESKTOP') != '1':
+            raise ValueError('Custom OpenAI-compatible endpoints are available in the desktop app only')
+        address = urlsplit(self.base_url)
+        if address.scheme not in ('http', 'https') or not address.hostname or address.username or address.password:
+            raise ValueError('Enter an http(s) address such as https://example.com/v1')
+        if self.mode != 'cloud_translation' or not self.model or '://' in self.model:
+            raise ValueError('A custom endpoint needs a model ID and translates text only')
+        key = self.api_key.get_secret_value()
+        if len(key) > 4096 or any(not 33 <= ord(char) <= 126 for char in key):
+            raise ValueError('Invalid API key')
         return self
 
     @property
@@ -65,17 +86,24 @@ def api_route(endpoint, tunnel_port=0):
     return endpoint, headers, extensions
 
 
+def provider_route(settings):
+    if settings.provider == 'custom':
+        return 'Custom endpoint', settings.base_url.rstrip('/') + '/chat/completions'
+    return PROVIDERS[settings.provider][:2]
+
+
 def provider_error(provider, status):
-    name = PROVIDERS[provider][0]
+    name = PROVIDERS[provider][0] if provider in PROVIDERS else 'Custom endpoint'
     hint = {401: 'check the API key', 402: 'check account credits', 403: 'check account access and the server outbound network route',
             429: 'request limit reached', 400: 'check the model and structured-output support'}.get(status, 'try again later')
     return ValueError(f'{name}: HTTP {status}; {hint}')
 
 
 async def complete(client, settings, messages, schema=None, tunnel_port=0, stage='translation'):
-    name, endpoint, _ = PROVIDERS[settings.provider]
+    name, endpoint = provider_route(settings)
     endpoint, headers, extensions = api_route(endpoint, tunnel_port)
-    headers['Authorization'] = 'Bearer ' + settings.api_key.get_secret_value()
+    if settings.api_key.get_secret_value():
+        headers['Authorization'] = 'Bearer ' + settings.api_key.get_secret_value()
     body = {'model': settings.model, 'messages': messages, 'stream': False, 'temperature': 0}
     token_field = 'max_completion_tokens' if settings.provider == 'openai' else 'max_tokens'
     body[token_field] = 512

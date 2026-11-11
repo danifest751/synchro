@@ -101,6 +101,32 @@ class YoutubeAudio:
         return audio
 
     @classmethod
+    async def open_file(cls, path: str, position: float):
+        """Desktop app: decode a local video file; the same windows and seeking as a YouTube stream."""
+        if not os.path.isfile(path):
+            raise ValueError("The video file was not found")
+        source = "file:" + os.path.abspath(path)  # never let a path be read as a network address
+        probe = await asyncio.create_subprocess_exec("ffmpeg", "-nostdin", "-hide_banner", "-i", source,
+                                                     stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
+        try:
+            _, report = await asyncio.wait_for(probe.communicate(), 30)
+        except BaseException:
+            if probe.returncode is None:
+                probe.kill()
+            await probe.communicate()
+            raise
+        match = re.search(rb"Duration: (\d+):(\d+):(\d+(?:\.\d+)?)", report)
+        if not match or not re.search(rb"Stream #\S+.*: Audio:", report):
+            raise ValueError("This file has no readable audio track")
+        duration = int(match[1]) * 3600 + int(match[2]) * 60 + float(match[3])
+        if not math.isfinite(position) or not 0 <= position < duration:
+            raise ValueError("Position beyond the end of the video")
+        process = await asyncio.create_subprocess_exec(
+            "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-ss", str(position), "-i", source,
+            "-vn", "-ac", "1", "-ar", str(RATE), "-f", "s16le", "pipe:1", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        return cls(process, asyncio.create_task(discard_errors(process.stderr)), duration, position)
+
+    @classmethod
     async def cached_info(cls, args, url, key, browser=None):
         # Serialize YouTube JavaScript challenges.
         async with _resolution_lock:
