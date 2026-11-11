@@ -1,0 +1,3 @@
+# Synchro targets current CPUs: AVX2, FMA and BMI2 (Intel Haswell 2013+, AMD Excavator/Zen).
+[build]
+rustflags = ["-C", "target-cpu=x86-64-v3"]

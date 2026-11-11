@@ -21,3 +21,8 @@ jobs:
           PYTHONPATH: server
       - run: python -m unittest discover -s tests -p 'test_*.py' -v
       - run: python tools/package.py
+  desktop:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo test --manifest-path desktop/Cargo.toml

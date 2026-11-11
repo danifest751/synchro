@@ -28,3 +28,4 @@ models/
 *.safetensors
 .venv-*/
 .synchro-update-backups/
+desktop/target/
