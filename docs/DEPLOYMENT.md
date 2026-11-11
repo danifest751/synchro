@@ -108,6 +108,17 @@ cd server
 
 Whisper still needs an external Speaches service at `SPEECH_URL`. FFmpeg and Node must be available in the gateway environment. The optional Piper TTS path additionally requires an operator-provided `/accent` service at loopback:8775 that returns `{"text":"..."}` with plus-before-vowel stress markers; it is not included here. Silero does not use this service.
 
+### All-in-one CPU container
+
+`deploy/cpu.Dockerfile` runs the gateway in host mode: GigaAM, SenseVoice, Silero V5 CIS, RUAccent, and the Whisper fallback share one CPU process, and text translation needs a cloud provider (`cloud_translation`). Mount read-only models at `/models/gigaam`, `/models/sensevoice`, `/models/silero/v5_cis_base_nostress.pt`, `/models/ruaccent`, and `/models/whisper`; mount `ruaccent/koziev` over the package's `koziev` folder.
+
+```bash
+docker build -t synchro-cpu -f deploy/cpu.Dockerfile .
+docker run -d --name synchro-cpu --restart unless-stopped --network host --cpus 12 --env-file gateway.env   -v /opt/synchro-cpu/models:/models:ro   -v /opt/synchro-cpu/models/ruaccent/koziev:/usr/local/lib/python3.12/site-packages/ruaccent/koziev:ro   synchro-cpu --port 8768
+```
+
+`gateway.env` needs `SYNCHRO_TOKEN`, `SYNCHRO_ORIGIN`, and optionally `SYNCHRO_MAX_SESSIONS`. On a data-centre address YouTube usually answers "Sign in to confirm you're not a bot"; set `YTDLP_PROXY` to a residential route.
+
 ### Chinese, Korean and Japanese recognition
 
 English uses GigaAM. Chinese, Korean, and Japanese use SenseVoice-Small through sherpa-onnx inside the gateway process on CPU, eight threads, one window at a time. Extract `model.int8.onnx` and `tokens.txt` from the [int8 package](https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2) into `.local/models/sensevoice`, mount that folder read-only into the gateway container, and set `SYNCHRO_SENSEVOICE_MODEL` to the mounted path. `remote_setup.py` mounts it at `/models/sensevoice` when the folder exists. Without the model, those languages fall back to Whisper with the selected language.
