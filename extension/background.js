@@ -89,20 +89,12 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     });
     return;
   }
-  if (['youtube-position', 'youtube-seek', 'youtube-stop', 'youtube-voices'].includes(message.type)) {
+  if (['youtube-position', 'youtube-seek', 'youtube-stop'].includes(message.type)) {
     void chrome.storage.session.get(['sourceTab', 'sourceMode']).then(async state => {
       if (state.sourceMode !== 'youtube' || sender.tab?.id !== state.sourceTab || sender.frameId !== 0) return respond({ok: false});
       if (!Number.isFinite(message.position) && message.type !== 'youtube-stop') return respond({ok: false});
       const config = await chrome.storage.local.get(['token', 'delay', 'voice', 'apiBase', 'translation']);
       config.apiBase = serverBase(config.apiBase);
-      if (message.type === 'youtube-voices') {
-        const mode = config.translation?.mode || (config.translation?.provider && config.translation.provider !== 'local' ? 'cloud_translation' : 'local');
-        const response = await fetch(config.apiBase + '/api/voices?mode=' + encodeURIComponent(mode), {
-          headers: {Authorization: `Bearer ${config.token}`}, signal: AbortSignal.timeout(10000)});
-        if (!response.ok) throw new Error('Could not load the server voice list');
-        const catalog = await response.json();
-        return respond({ok: true, voices: catalog.voices, note: catalog.note});
-      }
       const tab = await chrome.tabs.get(state.sourceTab);
       if (message.type === 'youtube-seek') await chrome.storage.session.set({captureActive: true});
       const result = await chrome.runtime.sendMessage({target: 'offscreen', type: message.type === 'youtube-seek' ? 'youtube-start' : message.type,

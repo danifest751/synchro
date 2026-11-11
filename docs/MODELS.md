@@ -7,7 +7,7 @@
 | Primary ASR | GigaAM Multilingual 220M CTC, ONNX Runtime | CPU, 8 intra-op threads |
 | ASR fallback | Whisper large-v3-turbo, faster-whisper through Speaches | Separate GPU |
 | Text translation | Gemma 4 26B-A4B GGUF, llama.cpp with optional MTP | RTX 5060 Ti 16 GB |
-| Speech | Silero Russian v5.5 | CPU, 8 threads |
+| Speech | Silero V5 CIS with Russian stress marks from RUAccent | CPU, 2 synthesis threads |
 
 Synchro translates **recognized text**. It does not translate video frames or perform end-to-end speech-to-speech inference. The public repository contains integration code, not weights. Download and review models separately.
 
@@ -17,7 +17,7 @@ Version 0.4.0 also supports [optional cloud text translation](CLOUD.md). Its HY-
 
 The gateway's translator requests a JSON object containing `translation`, passes the last two source/translation pairs as context, and asks for speech-friendly Russian. With Silero enabled it rejects remaining Latin letters and digits after one rewrite attempt. The model must support these requirements; a raw translation benchmark is not proof of drop-in compatibility.
 
-GigaAM's public model card describes moderate English quality. The current service uses greedy CTC decoding and does not expose a general accuracy/temperature/beam control. Silero exposes three selected Russian speakers. The fallback Piper voices and accent endpoint are legacy paths rather than the recommended fresh installation.
+GigaAM's public model card describes moderate English quality. The current service uses greedy CTC decoding and does not expose a general accuracy/temperature/beam control. Silero exposes five selected Russian speakers. The gateway prepares stress marks before synthesis. The host worker runs RUAccent directly on CPU.
 
 ## Historical prototype measurements
 
@@ -45,7 +45,7 @@ Synchro's [MIT license](../LICENSE) applies to its own source and documentation.
 
 - [GigaAM Multilingual](https://huggingface.co/ai-sage/GigaAM-Multilingual) and the [ONNX export](https://huggingface.co/istupakov/gigaam-multilingual-ctc-onnx) identify MIT licenses in their model cards.
 - [Gemma 4](https://ai.google.dev/gemma/apache_2) is published under Apache 2.0. Other Gemma generations and specialized variants can have different terms; check the actual model you download.
-- [Silero's default model license](https://github.com/snakers4/silero-models/blob/master/LICENSE) is CC BY-NC-SA 4.0. Obtain appropriate rights before commercial deployment of the selected weights; the integration code being MIT does not remove noncommercial model terms.
+- [Silero V5 CIS Base](https://github.com/snakers4/silero-models#v5-cis-base-models) lists the selected weights under MIT. Other Silero releases can use different terms. Review [RUAccent's terms](https://github.com/Den4ikAI/ruaccent) separately.
 - Whisper, faster-whisper, Speaches, CTranslate2, ONNX Runtime, PyTorch, and individual Piper voices retain their own terms.
 - The optional Piper/eSpeak data path includes GPL-licensed eSpeak NG material inside the built speech image. Distribution of that image has separate obligations. This repository does not bundle that image or those data.
 

@@ -44,7 +44,7 @@
   </style>
   <div class="bar"><strong>Synchro</strong><button id="toggle" aria-label="Play with translation" title="Play with translation">${icons.play}</button><button id="captions" aria-label="Translation captions" title="Translation captions" aria-pressed="false">${icons.captions}</button><button id="settings" aria-label="Translation settings" title="Translation settings" aria-expanded="false">${icons.settings}</button><button id="close" aria-label="Close translation" title="Close translation">${icons.close}</button></div>
   <section class="panel" id="panel" aria-label="Translation settings" hidden>
-    <label>Voice<select id="voice"><option value="female">Xenia · female</option><option value="male">Aidar · male</option><option value="male-eugene">Eugene · male</option></select></label>
+    <label>Voice<select id="voice"><option value="albina">Albina · female</option><option value="alfia">Alfia · female</option><option value="roman">Roman · male</option><option value="eduard">Eduard · male</option><option value="alexandr">Alexander · male</option></select></label>
     <label><span>Voiceover <output id="ttsValue">90%</output></span><input id="tts" aria-label="Voiceover volume" type="range" min="0" max="100" value="90"></label>
     <label><span>Original <output id="originalValue">55%</output></span><input id="original" aria-label="Original volume" type="range" min="0" max="100" value="55"></label>
     <label><span>Zoom <output id="zoomValue">100%</output></span><input id="zoom" aria-label="Video zoom" type="range" min="50" max="300" value="100"></label>
@@ -186,15 +186,13 @@
     zoom = Math.max(.5, Math.min(3, Number(saved.zoom) || 1)); fit = saved.fit === 'cover' ? 'cover' : 'contain'; captions = saved.captions === true;
     gain.gain.value = ttsVolume;
     for (const [name, value] of [['tts', ttsVolume], ['original', originalVolume]]) { find(name).value = String(Math.round(value * 100)); find(name + 'Value').textContent = `${Math.round(value * 100)}%`; }
-    void send('youtube-voices').then(result => {
-      if (!result?.ok || closed || !Array.isArray(result.voices)) return;
-      const voices = result.voices.filter(voice => typeof voice.id === 'string' && typeof voice.name === 'string');
-      find('voice').replaceChildren(...voices.map(voice => {
-        const option = document.createElement('option'); option.value = voice.id; option.textContent = voice.name; return option;
-      }));
-      find('voice').value = voices.some(voice => voice.id === data.voice) ? data.voice : 'female';
-      find('voice').title = result.note || '';
-    });
+    const voiceSelect = find('voice');
+    const allCloud = data.translation?.mode === 'cloud_all';
+    const aliases = allCloud ? {albina: 'female', alfia: 'female', roman: 'male', alexandr: 'male', eduard: 'male-eugene'} :
+      {female: 'albina', male: 'roman', 'male-eugene': 'eduard'};
+    if (allCloud) voiceSelect.innerHTML = '<option value="female">Nova · cloud female</option><option value="male">Onyx · cloud male</option><option value="male-eugene">Echo · cloud male</option>';
+    const selectedVoice = aliases[data.voice] || data.voice;
+    if ([...voiceSelect.options].some(option => option.value === selectedVoice)) voiceSelect.value = selectedVoice;
     host.dataset.delay = String(Number(data.delay) || 20); applyPicture();
   });
   function tick() {

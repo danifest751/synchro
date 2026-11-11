@@ -8,7 +8,7 @@ import os
 import re
 import wave
 
-SPEAKERS = {'aidar', 'eugene', 'xenia'}
+SPEAKERS = {'ru_roman', 'ru_eduard', 'ru_albina', 'ru_alexandr', 'ru_alfia'}
 
 
 def speech_input(body):
@@ -17,7 +17,7 @@ def speech_input(body):
         raise ValueError('Invalid voice or text')
     if re.search(r'[A-Za-z0-9]', text):
         raise ValueError('Names and numbers must be written as Russian words')
-    return text.replace('+', ' плюс '), voice
+    return text, voice
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -41,7 +41,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.authorized():
-            self.reply(200 if self.path == '/health' else 404, {'engine': 'silero-v5_5_ru', 'voices': sorted(SPEAKERS)})
+            self.reply(200 if self.path == '/health' else 404, {'engine': 'silero-v5-cis', 'voices': sorted(SPEAKERS)})
 
     def do_POST(self):
         if not self.authorized():
@@ -63,7 +63,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             # Preserve the translated spelling; automatic yo substitution can change word meanings.
             audio = self.server.model.apply_tts(text=text, speaker=voice, sample_rate=48000,
-                put_accent=True, put_stress_homo=True, put_yo=False, put_yo_homo=False)
+                put_accent=False, put_yo=False)
             pcm = (audio.detach().cpu().clamp(-1, 1).numpy() * 32767).astype('<i2').tobytes()
             output = io.BytesIO()
             with wave.open(output, 'wb') as wav:
@@ -88,12 +88,16 @@ if __name__ == '__main__':
     token = os.environ.get('SYNCHRO_SILERO_TOKEN', '')
     if len(token) < 32:
         raise SystemExit('SYNCHRO_SILERO_TOKEN must be configured')
-    torch.set_num_threads(8)
-    model_path = os.environ.get('SYNCHRO_SILERO_MODEL', 'models/silero/v5_5_ru.pt')
+    torch.set_num_threads(2)
+    torch.set_num_interop_threads(1)
+    model_path = os.environ.get('SYNCHRO_SILERO_MODEL', 'models/silero/v5_cis_base_nostress.pt')
     model = torch.package.PackageImporter(model_path).load_pickle('tts_models', 'model')
     model.to(torch.device('cpu'))
-    server = Server(('127.0.0.1', 8776), Handler)
+    if not SPEAKERS <= set(model.speakers):
+        raise SystemExit('The configured Silero model is missing selected voices')
+    port = int(os.environ.get('SYNCHRO_SILERO_PORT', '8776'))
+    server = Server(('127.0.0.1', port), Handler)
     server.authorization = ('Bearer ' + token).encode()
     server.model = model
-    logging.warning('Silero ready on loopback:8776, CPU only')
+    logging.warning('Silero V5 CIS ready on loopback:%s, CPU only', port)
     server.serve_forever()

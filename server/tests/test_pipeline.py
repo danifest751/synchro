@@ -41,6 +41,9 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         await pipeline.client.aclose()
         seen = []
         def respond(request):
+            if request.url.path == '/accent':
+                self.assertEqual(json.loads(request.content)['text'], 'Восемьдесят лет. На двери замок, за холмом замок…')
+                return httpx.Response(200, json={'text': 'в+осемьдесят л+ёт. На двер+и зам+ок за холм+ом з+амок'})
             self.assertEqual(str(request.url), 'http://silero/speech')
             self.assertEqual(request.headers['Authorization'], 'Bearer internal-tts-key')
             seen.append(json.loads(request.content))
@@ -48,10 +51,11 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         pipeline.client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
         try:
             with patch('synchro.pipeline.normalize_wav', new=AsyncMock(side_effect=lambda data: data)):
-                for voice in ['female', 'male', 'male-eugene']:
-                    await pipeline.speak('Восемьдесят лет исследований.', voice)
-            self.assertEqual([item['voice'] for item in seen], ['xenia', 'aidar', 'eugene'])
-            self.assertTrue(all(item['text'] == 'Восемьдесят лет исследований.' for item in seen))
+                for voice in ['roman', 'eduard', 'albina', 'alexandr', 'alfia', 'female']:
+                    await pipeline.speak('Восемьдесят лет. На двери замок, за холмом замок…', voice)
+            self.assertEqual([item['voice'] for item in seen],
+                ['ru_roman', 'ru_eduard', 'ru_albina', 'ru_alexandr', 'ru_alfia', 'ru_albina'])
+            self.assertTrue(all(item['text'] == 'В+осемьдесят л+ет. На двер+и зам+ок, за холм+ом з+амок…' for item in seen))
         finally:
             await pipeline.client.aclose()
 

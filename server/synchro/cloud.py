@@ -48,6 +48,10 @@ class TranslationSettings(BaseModel):
         return self.provider in ('kilo', 'openrouter') and self.model.startswith('tencent/hy-mt2-')
 
 
+class EmptyTranslationError(ValueError):
+    pass
+
+
 def api_route(endpoint, tunnel_port=0):
     headers = {}
     extensions = {}
@@ -81,6 +85,8 @@ async def complete(client, settings, messages, schema=None, tunnel_port=0, stage
         body['response_format'] = {'type': 'json_schema', 'json_schema': {'name': 'translation', 'strict': True, 'schema': schema}}
     reference = uuid.uuid4().hex[:12]
     failure = f'{name} is unreachable or timed out'
+    outcome = 'network_error'
+    fast_kilo = settings.provider == 'kilo' and (settings.is_hymt or settings.model == 'google/gemma-4-26b-a4b-it')
     try:
         async with asyncio.timeout(60):
             for attempt in range(2):
@@ -89,7 +95,8 @@ async def complete(client, settings, messages, schema=None, tunnel_port=0, stage
                 retry = True
                 outcome = 'network_error'
                 try:
-                    response = await client.post(endpoint, json=body, headers=headers, extensions=extensions, timeout=30)
+                    timeout = (8, 15)[attempt] if fast_kilo else 30
+                    response = await client.post(endpoint, json=body, headers=headers, extensions=extensions, timeout=timeout)
                     try:
                         record_usage(stage, response.json().get('usage'))
                     except (ValueError, AttributeError):
@@ -133,14 +140,16 @@ async def complete(client, settings, messages, schema=None, tunnel_port=0, stage
                     failure = f'{name} is unreachable or timed out'
                     outcome = type(error).__name__
                 # Never log credentials, response bodies, transcripts, or reasoning text.
-                logger.info('cloud_translation ref=%s provider=%s model=%s attempt=%d status=%s outcome=%s finish=%s tokens=%s reasoning_tokens=%s seconds=%.3f',
-                            reference, settings.provider, settings.model, attempt + 1, status, outcome, finish, tokens, reasoning, time.monotonic() - started)
+                logger.info('cloud_translation ref=%s provider=%s model=%s stage=%s attempt=%d status=%s outcome=%s finish=%s tokens=%s reasoning_tokens=%s seconds=%.3f',
+                            reference, settings.provider, settings.model, stage, attempt + 1, status, outcome, finish, tokens, reasoning, time.monotonic() - started)
                 if outcome == 'ok':
                     return result.strip()
                 if not retry or attempt == 1:
                     break
                 await asyncio.sleep(.5)
     except TimeoutError:
+        outcome = 'deadline'
         failure = f'{name}: translation timed out after 60 seconds'
         logger.warning('cloud_translation ref=%s provider=%s model=%s outcome=deadline', reference, settings.provider, settings.model)
-    raise ValueError(f'{failure}. Retry translation. Reference: {reference}') from None
+    error_type = EmptyTranslationError if outcome == 'empty_response' else ValueError
+    raise error_type(f'{failure}. Retry translation. Reference: {reference}') from None

@@ -62,9 +62,3 @@ and retain their upstream licenses:
 https://github.com/openai/whisper , https://github.com/SYSTRAN/faster-whisper ,
 https://github.com/speaches-ai/speaches , https://github.com/pytorch/pytorch ,
 https://ffmpeg.org/legal.html . Piper voice licenses must be checked per voice.
-
-Optional VoiceStudio integration uses a separately installed service through its
-HTTP API: https://github.com/debpalash/VoiceStudio . No upstream application code
-or model files are bundled. OmniVoice weights and its tokenizer retain separate
-noncommercial and Higgs/Meta terms: https://huggingface.co/k2-fsa/OmniVoice .
-See docs/VOICES.md for deployment and model-rights requirements.

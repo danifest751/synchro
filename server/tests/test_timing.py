@@ -93,3 +93,15 @@ class TimingTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result['segments'][1]['start'], 4)
         finally:
             await pipeline.client.aclose()
+
+    async def test_alignment_repairs_wrong_boundary_count_once(self):
+        pipeline = Pipeline('http://speech', 'http://llm')
+        try:
+            pipeline.completion = AsyncMock(side_effect=['{"ends":[1,3]}', '{"ends":[1,1,3]}'])
+            result = await pipeline.align_phrases([{'source': 'Right?'}, {'source': 'Correct.'}, {'source': 'Welcome.'}],
+                'Верно. Добро пожаловать.', TranslationSettings())
+            self.assertEqual(result, ['Верно.', '', 'Добро пожаловать.'])
+            self.assertEqual(pipeline.completion.await_count, 2)
+            self.assertEqual(pipeline.completion.await_args.kwargs['schema']['properties']['ends']['minItems'], 3)
+        finally:
+            await pipeline.client.aclose()

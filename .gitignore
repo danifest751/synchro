@@ -27,3 +27,4 @@ models/
 *.pt
 *.safetensors
 .venv-*/
+.synchro-update-backups/

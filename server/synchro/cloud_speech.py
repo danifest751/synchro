@@ -14,7 +14,8 @@ import httpx
 from .cloud import PROVIDERS, api_route, provider_error
 from .usage import record_usage
 
-VOICES = {'female': 'nova', 'male': 'onyx', 'male-eugene': 'echo'}
+VOICES = {'female': 'nova', 'male': 'onyx', 'male-eugene': 'echo',
+          'roman': 'onyx', 'eduard': 'echo', 'albina': 'nova', 'alexandr': 'onyx', 'alfia': 'nova'}
 
 
 class SpeechTextMismatch(ValueError):

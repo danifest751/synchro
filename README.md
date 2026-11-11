@@ -15,7 +15,7 @@ Synchro is a Manifest V3 browser extension and a Python backend. On YouTube, vid
 - Local ASR, text translation, and speech synthesis; no paid cloud API is required.
 - Optional cloud text translation through OpenAI, Kilo Gateway, or OpenRouter, selected per viewer in settings.
 - Searchable Kilo/OpenRouter model catalogs with translation models first, live account balance, and approximate text-translation cost per minute.
-- Three Silero voices: Xenia, Aidar, and Eugene, plus six optional [VoiceStudio voices](docs/VOICES.md).
+- Five Silero V5 CIS voices: Roman, Eduard, Albina, Alexander, and Alfia.
 - Separate controls for original audio and voiceover, smooth audio ducking, optional captions, zoom, fit, and fill.
 - Video waits when translation is not ready and slows down for longer translated phrases.
 - Tab capture and a separate delayed player for other sites, using browser disk storage.
@@ -35,7 +35,7 @@ flowchart LR
     Extension[Extension and personal key] --> Gateway
 ```
 
-The reference installation uses GigaAM Multilingual 220M with eight CPU threads, Gemma 4 26B-A4B on an RTX 5060 Ti 16 GB, and Silero v5.5 on CPU. Whisper turbo runs on a separate GPU as an ASR fallback. This is a tested configuration, not a minimum hardware requirement. Model choice and shared GPU memory determine capacity.
+The reference installation uses GigaAM Multilingual 220M with eight CPU threads, Gemma 4 26B-A4B on an RTX 5060 Ti 16 GB, and Silero V5 CIS on CPU. Whisper turbo runs on a separate GPU as an ASR fallback. This is a tested configuration, not a minimum hardware requirement. Model choice and shared GPU memory determine capacity.
 
 ## Get started
 

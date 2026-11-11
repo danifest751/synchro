@@ -13,7 +13,7 @@ You need either a running Synchro server or a personal connection from its opera
 
 Keep the extension directory in place. A personal connection contains an access key: do not publish it or share it with another person. Server operators should issue one key per viewer.
 
-Under **Processing**, choose Local, Cloud: text translation only, or Cloud: recognition, translation and voice. Cloud modes use one OpenAI, Kilo Gateway, or OpenRouter key. Enter your provider key and translation model, then use **Test translator** or **Test full cloud pipeline**. Save settings before starting playback. See [cloud modes](CLOUD.md) for data flow, audio charges and HY-MT2 requirements.
+Under **Processing**, choose Local, Cloud: text translation only, or Cloud: recognition, translation and voice. Cloud modes use one OpenAI, Kilo Gateway, or OpenRouter key. Enter your provider key and translation model, then use the test button for the selected mode. Save settings before starting playback. See [cloud modes](CLOUD.md) for data flow, audio charges and HY-MT2 requirements.
 
 ## Watch YouTube
 
@@ -31,7 +31,7 @@ Video is loaded by YouTube directly in your browser. Synchro's server separately
 | Play/pause | Start or pause translated playback |
 | Captions | Show or hide translated captions; off by default |
 | Settings | Select voice, adjust audio levels and picture |
-| Voice | Local: Xenia, Aidar, Eugene; full cloud: Nova, Onyx, Echo |
+| Voice | Local: Roman, Eduard, Albina, Alexander, Alfia; full cloud: Nova, Onyx, Echo |
 | Dismiss / Retry translation | Clear an error message or restart at the current position |
 | Cloud usage | Provider-reported USD total; hover for stage details and missing-price notes |
 | Voiceover / Original | Set the two audio levels independently |
@@ -39,8 +39,6 @@ Video is loaded by YouTube directly in your browser. Synchro's server separately
 | Close | End translation and restore the source player's settings |
 
 Original audio remains audible between phrases and is lowered while Russian speech plays. Buffering pauses the video until translation catches up. Video speed adjusts within each speech phrase so its start and end follow the voiceover; pauses retain normal speed. This uses estimated recognition timestamps, so it does not promise exact lip synchronization. Speech is not simply cut off at a chunk boundary.
-
-If your operator configured [VoiceStudio](VOICES.md), the voice menus also show Female 1–3 and Male 1–3. These voices use the operator's separate speech server, including when recognition runs on your own computer. Some deployments offer them only with cloud text translation because their local translator shares GPU memory. Full cloud mode offers the cloud provider's own voices.
 
 ## Other sites: tab capture
 

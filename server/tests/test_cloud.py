@@ -59,6 +59,31 @@ class CloudTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await pipeline.client.aclose()
 
+    async def test_kilo_hymt_empty_text_uses_gemma_for_the_same_chunk(self):
+        settings = TranslationSettings(provider='kilo', model='tencent/hy-mt2-30b-a3b', api_key='private-test-api-key-123')
+        calls = []
+
+        def respond(request):
+            self.assertEqual(str(request.url), PROVIDERS['kilo'][1])
+            self.assertEqual(request.headers['Authorization'], 'Bearer private-test-api-key-123')
+            body = json.loads(request.content)
+            calls.append(body['model'])
+            if body['model'] == settings.model:
+                return httpx.Response(200, json={'choices': [{'message': {'content': '', 'reasoning': 'not a translation'},
+                    'finish_reason': 'stop'}], 'usage': {'completion_tokens': 22, 'completion_tokens_details': {'reasoning_tokens': 22}}})
+            self.assertEqual(body['response_format']['type'], 'json_schema')
+            self.assertEqual(json.loads(body['messages'][-1]['content'])['current_text'], 'The lock is on the door.')
+            return httpx.Response(200, json={'choices': [{'message': {'content': '{"translation":"На двери висит замок."}'},
+                'finish_reason': 'stop'}]})
+
+        pipeline = Pipeline('http://speech', 'http://local', silero_url='http://silero')
+        await pipeline.client.aclose()
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as pipeline.client:
+            with patch('synchro.cloud.asyncio.sleep', new=AsyncMock()):
+                self.assertEqual(await pipeline.translate('The lock is on the door.', [], 5, translation=settings), 'На двери висит замок.')
+        self.assertEqual(calls, [settings.model, settings.model, 'google/gemma-4-26b-a4b-it'])
+        self.assertEqual(settings.model, 'tencent/hy-mt2-30b-a3b')
+
     async def test_errors_never_echo_provider_secrets_or_error_bodies(self):
         key = 'private-test-api-key-123'
         settings = TranslationSettings(provider='kilo', api_key=key)
@@ -115,6 +140,22 @@ class CloudTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(await complete(client, settings, []), 'Готово')
             self.assertEqual(len(calls), 2)
             self.assertEqual(calls[0].url, calls[1].url)
+
+    async def test_kilo_gemma_retries_a_stalled_request_with_a_short_timeout(self):
+        settings = TranslationSettings(provider='kilo', model='google/gemma-4-26b-a4b-it',
+                                       api_key='private-test-api-key-123')
+        timeouts = []
+
+        def respond(request):
+            timeouts.append(request.extensions['timeout']['read'])
+            if len(timeouts) == 1:
+                raise httpx.ReadTimeout('stalled')
+            return httpx.Response(200, json={'choices': [{'message': {'content': 'Готово'}}]})
+
+        with patch('synchro.cloud.asyncio.sleep', new=AsyncMock()):
+            async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+                self.assertEqual(await complete(client, settings, [], stage='alignment'), 'Готово')
+        self.assertEqual(timeouts, [8, 15])
 
     async def test_output_limit_retries_with_more_tokens_and_logs_no_private_content(self):
         settings = TranslationSettings(provider='kilo', api_key='private-test-api-key-123')

@@ -23,7 +23,6 @@ from .youtube import YoutubeAudio, youtube_url
 from .cloud import TranslationSettings
 from .catalog import CatalogRequest, ProviderCatalog
 from .usage import collect_usage, usage_summary
-from .voices import Voice
 
 if os.environ.get('SYNCHRO_HOST_MODE') == '1':
     from .host import HostPipeline as Pipeline
@@ -166,10 +165,7 @@ async def check(owner=Depends(authenticate)):
     return {'ok': True, 'client': owner, 'max_sessions': MAX_SESSIONS}
 
 
-@app.get('/api/voices')
-async def voices(mode: Literal['local', 'cloud_translation', 'cloud_all'] = 'local', owner=Depends(authenticate)):
-    note = 'VoiceStudio voices require cloud text translation on this server because its local translator shares the same GPU.' if mode == 'local' and pipeline.studio.shared_gpu and pipeline.studio.profiles else ''
-    return {'voices': pipeline.studio.available(mode), 'note': note}
+Voice = Literal['roman', 'eduard', 'albina', 'alexandr', 'alfia', 'female', 'male', 'male-eugene']
 
 
 class SessionRequest(BaseModel):

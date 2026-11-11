@@ -15,6 +15,7 @@ test('a playback error can be dismissed and retried from the same position', asy
     if (statusDestroyed && ['statusText', 'retry', 'dismiss', 'usageText'].includes(id)) return null;
     if (!elements.has(id)) {
       const created = element();
+      if (id === 'voice') created.options = ['albina', 'alfia', 'roman', 'eduard', 'alexandr'].map(value => ({value}));
       if (id === 'status') Object.defineProperty(created, 'textContent', {get: () => '', set() { statusDestroyed = true; }});
       elements.set(id, created);
     }
@@ -39,7 +40,7 @@ test('a playback error can be dismissed and retried from the same position', asy
     window: {addEventListener() {}}, document: {querySelector: () => player, createElement: name => name === 'div' ? host : element(), documentElement: element()},
     location: {href: 'https://www.youtube.com/watch?v=test'}, AudioContext, performance, console, atob,
     chrome: {runtime: {sendMessage: async message => { sent.push(message); return {ok: true}; },
-      onMessage: {addListener: handler => { receive = handler; }}}, storage: {local: {get: async () => ({}), set: async () => {}}}},
+      onMessage: {addListener: handler => { receive = handler; }}}, storage: {local: {get: async () => ({voice: 'male-eugene', translation: {mode: 'cloud_translation'}}), set: async () => {}}}},
     requestAnimationFrame: handler => { frame = handler; }, setInterval() {}, setTimeout, clearTimeout,
   });
   const result = vm.runInContext(fs.readFileSync(new URL('../extension/youtube.js', import.meta.url), 'utf8'), context);
@@ -52,6 +53,8 @@ test('a playback error can be dismissed and retried from the same position', asy
   frame();
   assert.doesNotMatch(elements.get('statusText').textContent, /empty response/);
   assert.equal(elements.get('dismiss').hidden, true);
+  await Promise.resolve();
+  assert.equal(elements.get('voice').value, 'eduard');
   assert.equal(elements.get('start').textContent, 'Retry translation');
   await elements.get('start').onclick();
   assert.equal(sent.at(-1).type, 'youtube-seek');

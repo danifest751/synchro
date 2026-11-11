@@ -8,6 +8,37 @@ import re
 import time
 
 from .pipeline import Pipeline, RATE, SILERO_VOICES, normalize_wav, wav_bytes
+from .stress import preserve_stress, silero_marks, spoken_text
+
+
+def load_host_accent():
+    import onnxruntime as ort
+    import ruaccent
+    from ruaccent import accent_model, omograph_model, stress_usage_model, yo_homograph_model
+
+    path = Path(os.environ['SYNCHRO_HOST_ACCENT_MODEL']).resolve(strict=True)
+    package = Path(ruaccent.__file__).parent
+    for folder in (path / 'dictionary', path / 'nn/nn_omograph/turbo3.1', package / 'koziev'):
+        if not folder.is_dir():
+            raise ValueError('Install the local RUAccent assets before starting playback')
+
+    options = ort.SessionOptions()
+    options.intra_op_num_threads = 2
+    options.inter_op_num_threads = 1
+    options.add_session_config_entry('session.intra_op.allow_spinning', '0')
+
+    # RUAccent 1.5.8.3 does not expose ONNX session options.
+    def cpu_session(path, *, providers):
+        return ort.InferenceSession(path, sess_options=options, providers=['CPUExecutionProvider'])
+
+    for module in (accent_model, omograph_model, stress_usage_model, yo_homograph_model):
+        module.InferenceSession = cpu_session
+    accent = ruaccent.RUAccent()
+    accent.load(omograph_model_size='turbo3.1', use_dictionary=True, device='CPU', workdir=str(path))
+    # Transformers 5 omits token_type_ids by default for the tokenizer used on unknown words.
+    unknown_word_model = accent.accent_model
+    unknown_word_model.tokenizer.model_input_names = [item.name for item in unknown_word_model.session.get_inputs()]
+    return accent
 
 
 class HostPipeline(Pipeline):
@@ -17,7 +48,7 @@ class HostPipeline(Pipeline):
         self.host_lock = asyncio.Lock()
         # Cancelling an HTTP request cannot cancel native CPU inference.
         self.host_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='synchro-cpu')
-        self.host_asr = self.host_tts = self.host_whisper = None
+        self.host_asr = self.host_tts = self.host_whisper = self.host_accent = None
 
     def recognize_cpu(self, pcm):
         import numpy as np
@@ -59,12 +90,19 @@ class HostPipeline(Pipeline):
         if not isinstance(text, str) or not 0 < len(text.strip()) <= 2000 or re.search(r'[A-Za-z0-9]', text):
             raise ValueError('Russian speech needs Cyrillic names and numbers written as words')
         if self.host_tts is None:
-            torch.set_num_threads(8)
+            torch.set_num_threads(2)
             path = Path(os.environ['SYNCHRO_HOST_TTS_MODEL']).resolve(strict=True)
-            self.host_tts = torch.package.PackageImporter(str(path)).load_pickle('tts_models', 'model')
-            self.host_tts.to(torch.device('cpu'))
-        audio = self.host_tts.apply_tts(text=text.replace('+', ' плюс '), speaker=SILERO_VOICES[voice], sample_rate=48000,
-            put_accent=True, put_stress_homo=True, put_yo=False, put_yo_homo=False)
+            model = torch.package.PackageImporter(str(path)).load_pickle('tts_models', 'model')
+            if not set(SILERO_VOICES.values()) <= set(model.speakers):
+                raise ValueError('Configure the Silero V5 CIS model for the selected voices')
+            model.to(torch.device('cpu'))
+            self.host_tts = model
+        if self.host_accent is None:
+            self.host_accent = load_host_accent()
+        spoken = spoken_text(text)
+        marked = silero_marks(preserve_stress(spoken, self.host_accent.process_all(spoken)))
+        audio = self.host_tts.apply_tts(text=marked, speaker=SILERO_VOICES[voice], sample_rate=48000,
+            put_accent=False, put_yo=False)
         pcm = (audio.detach().cpu().clamp(-1, 1).numpy() * 32767).astype('<i2').tobytes()
         return wav_bytes(pcm, 48000)
 

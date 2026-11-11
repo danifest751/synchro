@@ -64,7 +64,7 @@ For a separate system-level ASR host, `deploy/gigaam.service` is a template usin
 
 ## 4. Start Silero synthesis on CPU
 
-Install a CPU PyTorch build appropriate for your platform in `.venv-speech`. Obtain the Russian **v5.5** `v5_5_ru.pt` package from the [Silero project](https://github.com/snakers4/silero-models). Put it in `models/silero/v5_5_ru.pt`, or set `SYNCHRO_SILERO_MODEL` in `.local/silero.env`. Obtain files only from a trusted source: PyTorch packages contain executable model code.
+Install a CPU PyTorch build appropriate for your platform in `.venv-speech`. Obtain the **V5 CIS** `v5_cis_base_nostress.pt` package from the [Silero project](https://github.com/snakers4/silero-models). Put it in `models/silero/v5_cis_base_nostress.pt`, or set `SYNCHRO_SILERO_MODEL` in `.local/silero.env`. Obtain files only from a trusted source: PyTorch packages contain executable model code.
 
 ```bash
 python3 -m venv .venv-speech
@@ -74,7 +74,7 @@ systemctl --user daemon-reload
 systemctl --user enable --now synchro-silero
 ```
 
-The service uses eight threads and loopback:8776. Supported speakers are `xenia`, `aidar`, and `eugene`. Built-in stress handling is enabled; automatic yo substitution is disabled to preserve spelling. Consult [license notes](MODELS.md) before commercial use of model weights.
+The service uses two CPU threads and listens on loopback:8776 by default. The gateway prepares stress marks with the configured local `SYNCHRO_ACCENT_URL` service. Supported speakers are `ru_roman`, `ru_eduard`, `ru_albina`, `ru_alexandr`, and `ru_alfia`. Consult [license notes](MODELS.md) before commercial use of model weights.
 
 ## 5. Start the gateway and Whisper fallback
 
