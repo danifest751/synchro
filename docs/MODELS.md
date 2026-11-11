@@ -49,6 +49,8 @@ Synchro's [MIT license](../LICENSE) applies to its own source and documentation.
 - Whisper, faster-whisper, Speaches, CTranslate2, ONNX Runtime, PyTorch, and individual Piper voices retain their own terms.
 - The optional Piper/eSpeak data path includes GPL-licensed eSpeak NG material inside the built speech image. Distribution of that image has separate obligations. This repository does not bundle that image or those data.
 
+The [desktop installer](../desktop/README.md) redistributes these weights unmodified: GigaAM Multilingual CTC (MIT), SenseVoice-Small int8 (FunASR Model Open Source License: attribution of the source and authors, model name retained), Silero `v5_cis_base_nostress` (MIT, listed by Silero as an exception to its main CC BY-NC license), and RUAccent `turbo3.1` with its dictionary and morphology data (MIT). It contains no Whisper, Gemma, Piper, or other Silero weights.
+
 See [third-party notices](../THIRD_PARTY_NOTICES.md) for the retained Avorythm notice and upstream links.
 
 ## Chinese, Korean and Japanese recognition on CPU

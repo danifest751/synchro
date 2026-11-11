@@ -1,5 +1,11 @@
 # Changelog
 
+## Desktop 0.1.0 — 2026-11-12
+
+- First Windows build of Synchro Desktop: an mpv-based player for local video files with Russian voiceover. Speech recognition (GigaAM, SenseVoice), stress marking (RUAccent) and the five Silero voices run on the CPU through the bundled engine; text translation uses OpenRouter, Kilo Gateway, OpenAI or any OpenAI-compatible address, including a local model.
+- Per-user installer (Inno Setup) with a private Python 3.12, models, FFmpeg and mpv; Open with entries for common video files; `--self-test` for diagnostics.
+- Engine: `/api/file` and custom OpenAI-compatible providers in desktop mode only; host mode without Whisper.
+
 ## 0.4.6 — 2026-11-12
 
 - YouTube is fetched through the viewer's browser: the extension connects to `/api/relay`, and the gateway's yt-dlp and FFmpeg send their requests over it, so a data-centre server needs no YouTube route or workstation proxy. Only HTTPS YouTube hosts are reachable, without cookies. Without the relay the server uses its own network as before.

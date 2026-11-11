@@ -1,13 +1,13 @@
 # Synchro — Local Video Dubbing
 
-Watch English videos with synchronized Russian voiceover, powered by models on your own server.
+Watch English, Chinese, Korean, and Japanese videos with synchronized Russian voiceover: on YouTube through a browser extension and your own server, or as local files in the Windows desktop player.
 
 [![MIT license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Tests](https://github.com/danifest751/synchro/actions/workflows/tests.yml/badge.svg)](https://github.com/danifest751/synchro/actions/workflows/tests.yml)
 
 Synchro is a Manifest V3 browser extension and a Python backend. On YouTube, video stays in the native player while the server fetches and translates the audio track. A small playback buffer gives local speech recognition, translation, and speech synthesis time to work.
 
-**Status: prototype 0.4.6.** English, Chinese, Korean, and Japanese videos are translated into Russian. The interface and documentation are in English. This repository does not provide a hosted service, access keys, or model weights. Choose local processing, cloud text translation, or a fully cloud AI pipeline; see [cloud modes](docs/CLOUD.md). Optional [CPU speech on the browser's computer](docs/HOST.md) avoids a remote speech server. Optional [GitHub extension updates](docs/UPDATES.md) preserve installed connection settings.
+**Status: prototype 0.4.6.** English, Chinese, Korean, and Japanese videos are translated into Russian. The interface and documentation are in English. This repository does not provide a hosted service or access keys; model weights are distributed only inside the desktop installer, under their own licenses. Choose local processing, cloud text translation, or a fully cloud AI pipeline; see [cloud modes](docs/CLOUD.md). Optional [CPU speech on the browser's computer](docs/HOST.md) avoids a remote speech server. Optional [GitHub extension updates](docs/UPDATES.md) preserve installed connection settings.
 
 ## Features
 
@@ -21,6 +21,10 @@ Synchro is a Manifest V3 browser extension and a Python backend. On YouTube, vid
 - Video waits when translation is not ready and slows down for longer translated phrases.
 - Tab capture and a separate delayed player for other sites, using browser disk storage.
 - Per-viewer access keys, revocation, session isolation, and a configurable concurrency limit.
+
+## Desktop player for Windows
+
+[Synchro Desktop](desktop/README.md) plays local video files with the same voiceover. Its installer contains everything for CPU-only speech — a private Python runtime, the engine, GigaAM, SenseVoice, Silero, RUAccent, FFmpeg and mpv — so you only add a translation provider key (OpenRouter, Kilo Gateway, OpenAI) or the address of an OpenAI-compatible model running on your own computer. Download it from the [desktop releases](https://github.com/danifest751/synchro/releases?q=desktop) (both the `.exe` and the `.bin` file), or [build it from source](desktop/README.md#building-from-source).
 
 ## How it works
 
@@ -57,6 +61,7 @@ The public source defaults to loopback. `synchro.example.com` is a placeholder f
 | Document | Contents |
 | --- | --- |
 | [User guide](docs/USER_GUIDE.md) | Installation, playback, voices, controls, updates |
+| [Desktop player](desktop/README.md) | Windows installer, providers, local models, troubleshooting, building |
 | [Deployment](docs/DEPLOYMENT.md) | Models, services, configuration, HTTPS, guest keys |
 | [Cloud translation](docs/CLOUD.md) | Provider selection, API keys, model IDs, testing, HY-MT2 behavior |
 | [Architecture](docs/ARCHITECTURE.md) | Browser/server flow, timing, storage, component map |

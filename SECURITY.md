@@ -11,6 +11,7 @@ This prototype has not received an independent security audit. Deploy model serv
 - Treat fetched URLs, transcripts, model output, audio, and accent-service output as untrusted data.
 - Cloud keys entered by viewers are stored in their browser profile and held in gateway session memory. The gateway is trusted with those keys. Use HTTPS remotely; never log request bodies or provider Authorization headers. Provider error bodies and validation inputs are not echoed to clients.
 - The browser relay lets the gateway request only HTTPS YouTube hosts through the viewer's browser, without cookies; both the extension and the gateway enforce the host list, and the extension rejects redirects to other hosts. Only the key's own sessions use its relay.
+- The desktop engine listens only on 127.0.0.1 with a random key per start; `/api/file` and custom provider addresses are enabled only with `SYNCHRO_DESKTOP=1` and must never be enabled on a shared gateway. The desktop app stores the provider key in the user's `%APPDATA%\Synchro\settings.json`.
 - Restrict any SSH gateway account to required forwarding ports and disallow interactive use.
 - The optional CONNECT proxy accepts only HTTPS to validated public YouTube addresses and the three exact supported AI API hosts; never turn it into an unauthenticated public proxy.
 
