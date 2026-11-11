@@ -187,6 +187,11 @@ async def warm_models(voice, translation):
     warm[key] = time.monotonic()
 
 
+def failure(stage, error):
+    # Error type and message only: cloud errors are sanitized and local errors name loopback services.
+    logging.getLogger('uvicorn.error').warning('%s outcome=failed error_type=%s error=%s', stage, type(error).__name__, str(error)[:300])
+
+
 async def warm_session(current):
     with collect_usage(current.usage):
         await warm_models(current.voice, current.translation)
@@ -257,6 +262,7 @@ async def start(body: SessionRequest | None = None, voice: Voice = 'female', own
         async with current.lock, asyncio.timeout(105):
             await exclusive(current, warm_session(current))
     except Exception as error:
+        failure('session_start', error)
         await discard(current)
         raise HTTPException(503, str(error) if isinstance(error, ValueError) else 'Could not warm up models. Check the server services')
     return {'session_id': current.id, 'window_samples': WINDOW, 'step_samples': 7 * 16000}
@@ -295,6 +301,7 @@ async def chunk(session_id: str, request: Request, owner=Depends(authenticate)):
             raise HTTPException(504, 'Audio translation timed out after 105 seconds')
         except Exception as error:
             warm.clear()
+            failure('capture_window', error)
             raise HTTPException(502, str(error) if isinstance(error, ValueError) else 'Local model error; check the server services')
         finally:
             current.touched = time.monotonic()
@@ -322,6 +329,7 @@ async def start_video(body: VideoRequest, owner=Depends(authenticate)):
         async with current.lock, asyncio.timeout(105):
             await exclusive(current, open_video(current, url, body.position))
     except Exception as error:
+        failure('video_start', error)
         await discard(current)
         raise HTTPException(502, str(error) if isinstance(error, ValueError) else 'Could not prepare audio or models')
     return {'session_id': current.id, 'base': current.audio.base, 'duration': current.audio.duration}
@@ -336,7 +344,8 @@ async def check_translation(body: TranslationSettings, owner=Depends(authenticat
             text = await pipeline.translate('She decided to sleep on it and give me an answer in the morning.', [], 6, translation=body)
     except ValueError as error:
         raise HTTPException(502, str(error))
-    except Exception:
+    except Exception as error:
+        failure('translation_check', error)
         raise HTTPException(502, 'Translation check failed; check the model service')
     return {'ok': True, 'provider': body.provider, 'model': body.model, 'translation': text,
             'seconds': round(time.monotonic() - started, 3), 'cloud_usage': usage_summary(usage)}
@@ -353,7 +362,8 @@ async def check_pipeline(body: SessionRequest, owner=Depends(authenticate)):
         raise HTTPException(502, str(error))
     except TimeoutError:
         raise HTTPException(504, 'Pipeline test timed out')
-    except Exception:
+    except Exception as error:
+        failure('pipeline_check', error)
         raise HTTPException(502, 'Pipeline test failed; check inference services')
     return {'ok': True, 'provider': body.translation.provider, 'mode': body.translation.mode,
             'translation': 'Recognition, translation and speech are available',
