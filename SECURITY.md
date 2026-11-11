@@ -10,6 +10,7 @@ This prototype has not received an independent security audit. Deploy model serv
 - Keep exact extension-Origin checks and the explicit server URL allowlist. A connection file must not be able to redirect a token to any arbitrary server.
 - Treat fetched URLs, transcripts, model output, audio, and accent-service output as untrusted data.
 - Cloud keys entered by viewers are stored in their browser profile and held in gateway session memory. The gateway is trusted with those keys. Use HTTPS remotely; never log request bodies or provider Authorization headers. Provider error bodies and validation inputs are not echoed to clients.
+- The browser relay lets the gateway request only HTTPS YouTube hosts through the viewer's browser, without cookies; both the extension and the gateway enforce the host list, and the extension rejects redirects to other hosts. Only the key's own sessions use its relay.
 - Restrict any SSH gateway account to required forwarding ports and disallow interactive use.
 - The optional CONNECT proxy accepts only HTTPS to validated public YouTube addresses and the three exact supported AI API hosts; never turn it into an unauthenticated public proxy.
 

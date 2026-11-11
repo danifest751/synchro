@@ -1,5 +1,6 @@
 import {serverBase} from './connection.mjs';
 import {translationSettings} from './translation.mjs';
+import {connectRelay} from './relay.mjs';
 let current, lifecycle = Promise.resolve();
 
 async function request(state, path, method = 'GET', body, cancel = true, timeout = 120000) {
@@ -37,6 +38,8 @@ function emit(state, event) {
 async function run(state) {
   try {
     emit(state, {type: 'loading'});
+    // Without the relay the server fetches YouTube from its own network.
+    await connectRelay(state.config).catch(() => {});
     // The initial request must return its ID even after cancellation so the session can be deleted.
     const opened = await request(state, '/api/video', 'POST', {url: state.url, position: state.position, voice: state.config.voice || 'female', language: state.config.sourceLanguage || 'en', translation: translationSettings(state.config.translation)}, false);
     state.id = opened.session_id;
@@ -45,6 +48,7 @@ async function run(state) {
     let ready = opened.base, finished = false, heartbeat = Date.now();
     while (!state.stopped) {
       if (!finished && ready < state.position + Math.max(14, Number(state.config.delay) || 20) + 14) {
+        await connectRelay(state.config).catch(() => {});
         // ready lets the server resend a response that was lost in transit instead of skipping a window.
         const result = await retried(() => request(state, `/api/video/${state.id}/next?ready=${ready}`, 'POST'), state.abort.signal);
         ready = result.ready_until; finished = result.finished; heartbeat = Date.now();

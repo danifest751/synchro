@@ -1,6 +1,11 @@
 import {updateAction} from './updates.mjs';
 import {serverBase} from './connection.mjs';
 let lifecycle = Promise.resolve();
+// Relay requests to youtube.com (relay.mjs) must carry YouTube's own Origin; other requests are untouched.
+void chrome.declarativeNetRequest.updateSessionRules({removeRuleIds: [1], addRules: [{id: 1, priority: 1,
+  action: {type: 'modifyHeaders', requestHeaders: [{header: 'origin', operation: 'set', value: 'https://www.youtube.com'},
+    {header: 'referer', operation: 'set', value: 'https://www.youtube.com/'}]},
+  condition: {initiatorDomains: [chrome.runtime.id], requestDomains: ['youtube.com'], resourceTypes: ['xmlhttprequest']}}]}).catch(() => {});
 const offscreenUrl = chrome.runtime.getURL('offscreen.html');
 
 async function checkUpdate() {
@@ -80,6 +85,15 @@ async function start(tabId) {
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
   if (message.target === 'offscreen') return;
   if (sender.id !== chrome.runtime.id) return;
+  if (message.type === 'relay-agent') {
+    // Only the offscreen relay may set the User-Agent of this extension's own googlevideo requests.
+    if (sender.tab || sender.url !== offscreenUrl || typeof message.agent !== 'string' || !/^[ -~]{1,512}$/.test(message.agent)) return respond({ok: false});
+    chrome.declarativeNetRequest.updateSessionRules({removeRuleIds: [2], addRules: [{id: 2, priority: 1,
+      action: {type: 'modifyHeaders', requestHeaders: [{header: 'user-agent', operation: 'set', value: message.agent}]},
+      condition: {initiatorDomains: [chrome.runtime.id], requestDomains: ['googlevideo.com'], resourceTypes: ['xmlhttprequest']}}]})
+      .then(() => respond({ok: true}), error => respond({ok: false, error: error.message}));
+    return true;
+  }
   if (message.type === 'youtube-event' || message.type === 'youtube-ended') {
     if (sender.tab || sender.url !== offscreenUrl) return;
     void chrome.storage.session.get(['sourceTab', 'sourceMode']).then(async state => {

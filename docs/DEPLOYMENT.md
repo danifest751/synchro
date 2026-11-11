@@ -154,13 +154,15 @@ For other viewers, configure HTTPS and explicitly allow your endpoint in all thr
 2. `host_permissions` and `content_security_policy.extension_pages` in `extension/manifest.json`.
 3. The site address in `deploy/Caddyfile`.
 
-Replace `https://synchro.example.com` with your actual HTTPS origin. Keep exact-origin validation; do not replace it with unrestricted credential forwarding. Repackage the extension after changes. Ensure generated connection files use the same URL.
+Replace `https://synchro.example.com` and `wss://synchro.example.com` with your actual HTTPS origin and its WebSocket form. Keep exact-origin validation; do not replace it with unrestricted credential forwarding. Repackage the extension after changes. Ensure generated connection files use the same URL.
 
 On a single host, change Caddy's upstream from 18768 to 8768. On a separate public gateway, adapt `deploy/public_tunnel.service` to forward gateway loopback:18768 to inference loopback:8768. Its reverse-direction ASR forward is optional. Restrict the SSH account to the necessary `PermitListen`/`PermitOpen` ports, disable interactive shell access, and provision trusted host keys before startup. Keep model ports private.
 
 The Caddy example disables upstream keepalive because Uvicorn or an SSH tunnel may close idle HTTP/1 connections before Caddy, causing a subsequent POST to fail with 502. Validate the adapted configuration before reloading Caddy. DNS, TLS certificates, firewall rules, and public-host provisioning are operator responsibilities.
 
 ## YouTube network access
+
+Since 0.4.6 the extension fetches YouTube through the viewer's browser over `/api/relay` (see [architecture](ARCHITECTURE.md)), so a data-centre server needs no YouTube route of its own. Reverse proxies must pass WebSocket upgrades; Caddy does by default. The extension's `connect-src` must list the server as `wss://` (or `ws://` for loopback) in addition to `https://`. The server-side route below remains the fallback for clients without the relay.
 
 If server egress can access YouTube, no extra proxy is needed. Otherwise, the optional Windows helper forwards a restricted local CONNECT proxy:
 

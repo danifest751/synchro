@@ -13,13 +13,14 @@ import time
 from typing import Literal
 import uuid
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from .pipeline import Pipeline, Session, STEP, WINDOW
+from .relay import Relay
 from .youtube import YoutubeAudio, youtube_url
 from .cloud import TranslationSettings
 from .catalog import CatalogRequest, ProviderCatalog
@@ -50,6 +51,7 @@ sessions = {}
 registry_lock = asyncio.Lock()
 warmup_lock = asyncio.Lock()
 requests = defaultdict(deque)
+relays = {}
 warm = {}
 
 
@@ -114,7 +116,18 @@ async def authenticate(request: Request):
     authorization = request.headers.get('authorization', '')
     if not authorization.startswith('Bearer ') or len(authorization) > 512:
         raise HTTPException(401, 'Invalid token')
-    token = authorization[7:]
+    owner = key_owner(authorization[7:])
+    now = time.monotonic()
+    recent = requests[owner]
+    while recent and recent[0] < now - 60:
+        recent.popleft()
+    if len(recent) >= 120:
+        raise HTTPException(429, 'Too many requests; wait one minute')
+    recent.append(now)
+    return owner
+
+
+def key_owner(token):
     owner = 'owner' if hmac.compare_digest(token.encode(), TOKEN.encode()) else None
     if owner is None and CLIENTS_FILE:
         try:
@@ -128,14 +141,38 @@ async def authenticate(request: Request):
             raise HTTPException(503, 'Could not validate the access key')
     if owner is None:
         raise HTTPException(401, 'Invalid token')
-    now = time.monotonic()
-    recent = requests[owner]
-    while recent and recent[0] < now - 60:
-        recent.popleft()
-    if len(recent) >= 120:
-        raise HTTPException(429, 'Too many requests; wait one minute')
-    recent.append(now)
     return owner
+
+
+@app.websocket('/api/relay')
+async def browser_relay(socket: WebSocket):
+    # The extension lends its network to this key's YouTube requests; see relay.py.
+    if socket.headers.get('origin') != ORIGIN:
+        await socket.close(1008)
+        return
+    await socket.accept()
+    try:
+        first = json.loads(await asyncio.wait_for(socket.receive_text(), 10))
+        token = first.get('token') if isinstance(first, dict) else None
+        if not isinstance(token, str) or len(token) > 512:
+            raise ValueError()
+        owner = key_owner(token)
+    except (ValueError, TimeoutError, HTTPException, WebSocketDisconnect):
+        await socket.close(1008)
+        return
+    current = relays[owner] = Relay(socket)
+    await socket.send_text(json.dumps({'type': 'ready'}))
+    try:
+        while True:
+            answer = json.loads(await socket.receive_text())
+            if isinstance(answer, dict):
+                current.resolve(answer)
+    except (WebSocketDisconnect, ValueError):
+        pass
+    finally:
+        current.close()
+        if relays.get(owner) is current:
+            del relays[owner]
 
 
 def owned(session_id, owner):
@@ -200,7 +237,7 @@ async def warm_session(current):
 
 
 async def open_video(current, url, position):
-    current.audio = await YoutubeAudio.open(url, position, current.language)
+    current.audio = await YoutubeAudio.open(url, position, current.language, lambda: relays.get(current.owner))
     await warm_session(current)
     current.offset = round(current.audio.base * 16000)
 
@@ -239,7 +276,7 @@ async def next_video_window(current, ready=None):
 
 @app.get('/health')
 async def health():
-    return {'service': 'synchro', 'version': '0.4.5', 'max_sessions': MAX_SESSIONS}
+    return {'service': 'synchro', 'version': '0.4.6', 'max_sessions': MAX_SESSIONS}
 
 
 @app.get('/api/check')

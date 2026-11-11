@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.6 — 2026-11-12
+
+- YouTube is fetched through the viewer's browser: the extension connects to `/api/relay`, and the gateway's yt-dlp and FFmpeg send their requests over it, so a data-centre server needs no YouTube route or workstation proxy. Only HTTPS YouTube hosts are reachable, without cookies. Without the relay the server uses its own network as before.
+- New extension permissions (YouTube hosts, header rules for the relay's own requests) and `ws:`/`wss:` server sources: this version is installed manually, not by the updater.
+- Added `deploy/cpu.Dockerfile`: GigaAM, SenseVoice, Silero, RUAccent and the Whisper fallback on CPU in one container, translation through a cloud provider.
+
 ## 0.4.5 — 2026-11-11
 
 - Added Chinese, Korean, and Japanese videos. A Video language setting (options page and player panel) selects the original-language YouTube audio track, the recognizer, and the translation prompt.

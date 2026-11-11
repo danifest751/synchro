@@ -9,6 +9,7 @@ import sys
 import time
 from urllib.parse import parse_qs, urlsplit
 
+from . import relay
 from .pipeline import RATE
 
 _metadata = {}
@@ -37,6 +38,13 @@ async def discard_errors(reader):
         pass
 
 
+def browser_clients():
+    # Through a browser, TV clients fail and their media URLs are bound to other User-Agents; clients that need no
+    # JavaScript challenge (yt-dlp's own list, currently visionos) return URLs the browser can download as itself.
+    from yt_dlp.extractor.youtube import YoutubeIE
+    return getattr(YoutubeIE, "_DEFAULT_JSLESS_CLIENTS", None) or ("visionos",)
+
+
 class YoutubeAudio:
     def __init__(self, process, errors, duration, base, reopen=None):
         self.process, self.errors = process, errors
@@ -48,9 +56,10 @@ class YoutubeAudio:
         # Async callable(position) -> (process, errors) that resumes a dropped CDN stream.
         self.reopen = reopen
         self.restarts = 0
+        self.routes = []
 
     @classmethod
-    async def open(cls, url: str, position: float, language: str = 'en'):
+    async def open(cls, url: str, position: float, language: str = 'en', relay_for=None):
         url = youtube_url(url)
         if not math.isfinite(position) or position < 0:
             raise ValueError("Invalid video position")
@@ -61,31 +70,64 @@ class YoutubeAudio:
         proxy = os.environ.get("YTDLP_PROXY", "")
         if proxy:
             args += ["--proxy", proxy]
+        # With a connected browser, YouTube is reached from the viewer's network instead of the server's.
+        browser = relay_for if relay_for and relay_for() else None
+        key = (url, language, bool(browser))
+        routes = []
+
+        async def source(info, at):
+            if not browser:
+                return await cls.spawn(info, at, proxy)
+            cls.check_media(info)
+            # Media URLs can be bound to the User-Agent of the YouTube client yt-dlp used.
+            token, local = await relay.media.add(browser, info["url"], info.get("http_headers", {}).get("User-Agent", ""))
+            routes.append(token)
+            return await cls.spawn({**info, "url": local}, at, "", local=True)
 
         async def reopen(at):
             # A signed media URL can expire during a long pause; resolve it again.
-            _metadata.pop((url, language), None)
-            return await cls.spawn(await cls.cached_info(args, url, language), at, proxy)
+            _metadata.pop(key, None)
+            return await source(await cls.cached_info(args, url, key, browser), at)
 
-        info = await cls.cached_info(args, url, language)
+        info = await cls.cached_info(args, url, key, browser)
         try:
-            return await cls.from_info(info, position, proxy, reopen)
+            audio = await cls.from_info(info, position, proxy, reopen, source)
         except Exception:
-            _metadata.pop((url, language), None)
+            _metadata.pop(key, None)
+            for token in routes:
+                relay.media.remove(token)
             raise
+        audio.routes = routes
+        return audio
 
     @classmethod
-    async def cached_info(cls, args, url, language):
+    async def cached_info(cls, args, url, key, browser=None):
         # Serialize YouTube JavaScript challenges.
         async with _resolution_lock:
-            cached = _metadata.get((url, language))
+            cached = _metadata.get(key)
             if cached and time.monotonic() - cached[0] < 600:
                 return cached[1]
-            info = await cls.resolve(args, url)
+            info = await (cls.resolve_in_browser(browser, args, url) if browser else cls.resolve(args, url))
             if len(_metadata) >= 3:
                 _metadata.pop(min(_metadata, key=lambda item: _metadata[item][0]))
-            _metadata[url, language] = (time.monotonic(), info)
+            _metadata[key] = (time.monotonic(), info)
             return info
+
+    @staticmethod
+    async def resolve_in_browser(browser, args, url):
+        current = browser()
+        if not current:
+            raise ValueError("The browser connection closed; restart translation")
+        options = {"quiet": True, "no_warnings": True, "noplaylist": True, "skip_download": True, "socket_timeout": 15,
+                   "retries": 1, "js_runtimes": {"node": {}}, "format": args[args.index("-f") + 1],
+                   "extractor_args": {"youtube": {"player_client": list(browser_clients())}}}
+        try:
+            return await asyncio.wait_for(asyncio.to_thread(relay.extract, current, url, options), 75)
+        except (OSError, ValueError, TimeoutError) as error:
+            raise ValueError("YouTube did not return audio through the browser. Check that YouTube opens in this browser") from error
+        except Exception as error:
+            # yt-dlp reports extractor failures with its own exception types.
+            raise ValueError("YouTube did not return audio through the browser: " + str(error)[:160]) from error
 
     @staticmethod
     async def resolve(args, url):
@@ -103,10 +145,15 @@ class YoutubeAudio:
         return json.loads(raw)
 
     @staticmethod
-    async def spawn(info, position, proxy):
+    def check_media(info):
         media = urlsplit(info.get("url", ""))
         if media.scheme != "https" or not (media.hostname or "").endswith(".googlevideo.com") or media.port not in (None, 443) or media.username:
             raise ValueError("YouTube returned an unsupported audio source")
+
+    @classmethod
+    async def spawn(cls, info, position, proxy, local=False):
+        if not local:
+            cls.check_media(info)
         headers = info.get("http_headers", {})
         agent = headers.get("User-Agent", "Mozilla/5.0")
         if "\r" in agent or "\n" in agent:
@@ -121,13 +168,13 @@ class YoutubeAudio:
         return process, asyncio.create_task(discard_errors(process.stderr))
 
     @classmethod
-    async def from_info(cls, info, position, proxy, reopen=None):
+    async def from_info(cls, info, position, proxy, reopen=None, source=None):
         if info.get("is_live"):
             raise ValueError("This mode supports recorded videos; live streams are not supported yet")
         duration = float(info.get("duration") or 0)
         if not math.isfinite(duration) or duration <= 0 or position >= duration:
             raise ValueError("Unknown duration or position beyond the end of the video")
-        process, errors = await cls.spawn(info, position, proxy)
+        process, errors = await (source(info, position) if source else cls.spawn(info, position, proxy))
         audio = cls(process, errors, duration, position, reopen)
         try:
             # Check CDN access before opening a browser session.
@@ -180,3 +227,5 @@ class YoutubeAudio:
         await self.process.stdout.read()
         await self.process.wait()
         await self.errors
+        for token in self.routes:
+            relay.media.remove(token)

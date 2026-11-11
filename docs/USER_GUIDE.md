@@ -22,7 +22,7 @@ Under **Processing**, choose Local, Cloud: text translation only, or Cloud: reco
 3. Wait for audio and models to prepare, then select **Play with translation** in the player overlay.
 4. Use normal YouTube controls to pause, seek, or enter fullscreen.
 
-Video is loaded by YouTube directly in your browser. Synchro's server separately retrieves the audio track. Seeking and changing voices discard the current translation session and prepare audio again from the selected position.
+Video is loaded by YouTube directly in your browser. The extension also fetches the audio track for the server through your browser, so YouTube sees your own connection. Synchro's server separately retrieves the audio track. Seeking and changing voices discard the current translation session and prepare audio again from the selected position.
 
 ## Overlay controls
 

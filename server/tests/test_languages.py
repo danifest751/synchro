@@ -1,5 +1,6 @@
 import json
 import unittest
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -90,7 +91,7 @@ class LanguageApiTests(unittest.IsolatedAsyncioTestCase):
         _metadata.clear()
         info = {'url': 'https://example.googlevideo.com/audio', 'duration': 100}
         with patch.object(YoutubeAudio, 'resolve', new=AsyncMock(return_value=info)) as resolve, \
-                patch.object(YoutubeAudio, 'from_info', new=AsyncMock(return_value='audio')):
+                patch.object(YoutubeAudio, 'from_info', new=AsyncMock(return_value=SimpleNamespace())):
             await YoutubeAudio.open('https://youtu.be/dQw4w9WgXcQ', 0, 'ko')
         selector = resolve.await_args.args[0][resolve.await_args.args[0].index('-f') + 1]
         self.assertTrue(selector.startswith('ba[language^=ko]'))

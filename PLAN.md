@@ -21,7 +21,7 @@ Prototype 0.4.1 implements English-to-Russian dubbing with self-hosted recogniti
 2. Compare English ASR accents, names, technical speech, and noise against Whisper.
 3. Improve sentence boundaries based on reproducible missed/repeated-word examples.
 4. Test mid-video advertisements, playlists, navigation, and source-player replacement.
-5. Establish server-side YouTube access without depending on an operator's workstation proxy.
+5. Done in 0.4.6: YouTube is fetched through the viewer's browser; measure long sessions and seeking through the relay.
 6. Compare integrated translation models for quality, phrase latency, memory, and concurrency using the same workload.
 7. Package browser-store distribution and signed updates.
 8. Explore live streams with explicit accumulated-delay management.
