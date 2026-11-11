@@ -1,0 +1,36 @@
+name: Release
+# A version bump in the extension manifest on main publishes the GitHub Release that
+# tools/update_extension.py installs. Run it manually to publish a version held back
+# until a compatible gateway is deployed.
+on:
+  push:
+    branches: [main]
+    paths: [extension/manifest.json]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency: release
+jobs:
+  test:
+    uses: ./.github/workflows/tests.yml
+  release:
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publish the manifest version once
+        run: |
+          version=$(python3 -c "import json; print(json.load(open('extension/manifest.json'))['version'])")
+          if gh release view "v$version" >/dev/null 2>&1; then
+            echo "Release v$version already exists"
+            exit 0
+          fi
+          python3 tools/package.py
+          awk -v heading="## $version " 'index($0, "## ") == 1 { show = index($0, heading) == 1 } show' CHANGELOG.md > notes.md
+          gh release create "v$version" output/Synchro-extension.zip --target "$GITHUB_SHA" \
+            --title "Synchro $version" --notes-file notes.md --latest

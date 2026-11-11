@@ -29,4 +29,10 @@ To remove the Windows schedule:
 Unregister-ScheduledTask -TaskName 'Synchro GitHub extension updates' -Confirm:$false
 ```
 
+## Publishing an update
+
+Releases are automatic. A push to `main` that changes `extension/manifest.json` runs the test suite and, if no release exists for that manifest version, publishes `v<version>` with `Synchro-extension.zip` and the matching `CHANGELOG.md` section. Installed updaters pick it up within 15 minutes and Chrome reloads after playback. A push without a version change publishes nothing.
+
+When an extension version needs a newer gateway, deploy the gateway first. To hold a version back, bump it in a commit that the gateway can already serve, or bump it and publish later with **Actions → Release → Run workflow**, which publishes the current manifest version once.
+
 GitHub updates cover the browser extension only. The operator must deploy a compatible gateway separately; downloading browser files does not update inference services.
