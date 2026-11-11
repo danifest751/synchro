@@ -50,7 +50,6 @@ impl Layout {
 
 pub struct Engine {
     child: Child,
-    _job: Job,
     pub api: Api,
 }
 
@@ -96,8 +95,8 @@ impl Engine {
             .creation_flags(CREATE_NO_WINDOW)
             .spawn()
             .map_err(|e| format!("Could not start the engine ({}): {e}", layout.python.display()))?;
-        let job = Job::kill_on_close(&child)?;
-        let engine = Engine { child, _job: job, api: Api::new(format!("http://127.0.0.1:{port}"), token) };
+        adopt(&child)?;
+        let engine = Engine { child, api: Api::new(format!("http://127.0.0.1:{port}"), token) };
         let started = Instant::now();
         while started.elapsed() < Duration::from_secs(90) {
             if engine.api.health() {
@@ -115,35 +114,37 @@ impl Drop for Engine {
     }
 }
 
-/// Windows job object: the engine dies with Synchro even if Synchro crashes.
+/// One kill-on-close job for the whole program: the engine and mpv die with Synchro even if it crashes.
+/// The handle is never closed explicitly; Windows closes it when this process ends.
 struct Job(windows_sys::Win32::Foundation::HANDLE);
 
 unsafe impl Send for Job {}
+unsafe impl Sync for Job {}
 
-impl Job {
-    fn kill_on_close(child: &Child) -> Result<Job, String> {
-        use windows_sys::Win32::System::JobObjects::*;
-        unsafe {
-            let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
-            if job.is_null() {
-                return Err("Could not create a job object".into());
-            }
-            let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
-            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-            let ok = SetInformationJobObject(job, JobObjectExtendedLimitInformation, &info as *const _ as *const _,
-                                             std::mem::size_of_val(&info) as u32) != 0
-                && AssignProcessToJobObject(job, child.as_raw_handle() as _) != 0;
-            if !ok {
-                windows_sys::Win32::Foundation::CloseHandle(job);
-                return Err("Could not attach the engine to a job object".into());
-            }
-            Ok(Job(job))
+static JOB: std::sync::OnceLock<Option<Job>> = std::sync::OnceLock::new();
+
+fn create_job() -> Option<Job> {
+    use windows_sys::Win32::System::JobObjects::*;
+    unsafe {
+        let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+        if job.is_null() {
+            return None;
         }
+        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        let size = std::mem::size_of_val(&info) as u32;
+        if SetInformationJobObject(job, JobObjectExtendedLimitInformation, &info as *const _ as *const _, size) == 0 {
+            windows_sys::Win32::Foundation::CloseHandle(job);
+            return None;
+        }
+        Some(Job(job))
     }
 }
 
-impl Drop for Job {
-    fn drop(&mut self) {
-        unsafe { windows_sys::Win32::Foundation::CloseHandle(self.0) };
+pub fn adopt(child: &Child) -> Result<(), String> {
+    let job = JOB.get_or_init(create_job).as_ref().ok_or("Could not create a job object")?;
+    if unsafe { windows_sys::Win32::System::JobObjects::AssignProcessToJobObject(job.0, child.as_raw_handle() as _) } == 0 {
+        return Err("Could not attach a helper process to Synchro".into());
     }
+    Ok(())
 }

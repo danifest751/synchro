@@ -30,6 +30,8 @@ impl Mpv {
             .creation_flags(0x0800_0000)
             .spawn()
             .map_err(|e| format!("Could not start mpv ({}): {e}", mpv.display()))?;
+        // The video window closes with Synchro, even after a crash.
+        let _ = crate::engine::adopt(&child);
         for _ in 0..100 {
             if let Ok(pipe) = std::fs::OpenOptions::new().read(true).write(true).open(&pipe) {
                 let writer = pipe.try_clone().map_err(|e| e.to_string())?;

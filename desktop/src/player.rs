@@ -222,8 +222,21 @@ fn schedule(mpv_path: PathBuf, file: PathBuf, settings: Arc<Mutex<Settings>>, sh
             return;
         }
     };
+    // A short plain-text journal for support: state changes only, never transcripts' audio.
+    let started = Instant::now();
+    let journal = std::sync::Mutex::new(std::fs::File::create(crate::engine::log_path().with_file_name("player.log")).ok());
+    let log = |text: String| {
+        use std::io::Write;
+        if let Some(file) = journal.lock().unwrap().as_mut() {
+            let _ = writeln!(file, "{:8.2} {text}", started.elapsed().as_secs_f64());
+        }
+    };
+    log(format!("open {}", file.display()));
     // Without an audio device the picture still plays; there is just no voice.
     let device = rodio::DeviceSinkBuilder::open_default_sink().ok();
+    if device.is_none() {
+        log("no audio output device; voice disabled".into());
+    }
     let mut voice: Option<Voice> = None;
     let (mut wanted, mut held, mut preparing, mut speed) = (true, true, true, 1.0);
     let (mut last, mut generation, mut caption) = (None::<(f64, Instant)>, 0u64, None::<u64>);
@@ -245,6 +258,7 @@ fn schedule(mpv_path: PathBuf, file: PathBuf, settings: Arc<Mutex<Settings>>, sh
             seeking || (time - expected).abs() > 1.5
         });
         if jumped {
+            log(format!("seek to {time:.1}"));
             restart(&mut s, Some(time));
         }
         if s.generation != generation {
@@ -255,7 +269,9 @@ fn schedule(mpv_path: PathBuf, file: PathBuf, settings: Arc<Mutex<Settings>>, sh
         last = Some((time, now));
         s.position = time;
         // mpv's own pause button: playback the user stopped stays stopped; a press while we hold resumes intent.
-        if paused && !held {
+        if paused && !held && wanted {
+            let end = mpv.flag("eof-reached").unwrap_or(false);
+            log(if end { format!("end of video at {time:.1}") } else { format!("paused by the viewer at {time:.1}") });
             wanted = false;
         }
         if !paused && held {
@@ -267,16 +283,19 @@ fn schedule(mpv_path: PathBuf, file: PathBuf, settings: Arc<Mutex<Settings>>, sh
             preparing = false;
         }
         if wanted && !paused && (preparing || starved(ready, time, finished)) {
+            log(format!("waiting for translation at {time:.1} (ready to {ready:.1})"));
             mpv.set("pause", json!(true));
             held = true;
             stop_voice(&mut voice);
         } else if wanted && paused && held && !preparing && enough(ready, time, finished) && s.error.is_none() {
+            log(format!("playing from {time:.1} (ready to {ready:.1})"));
             mpv.set("pause", json!(false));
             held = false;
         }
         let cue = cue_at(&s.cues, time);
         let rate = video_rate(cue);
         if (rate - speed).abs() > 1e-4 {
+            log(format!("video speed {rate:.2} at {time:.1}"));
             stop_voice(&mut voice);
             mpv.set("speed", json!(rate));
             speed = rate;
@@ -295,6 +314,7 @@ fn schedule(mpv_path: PathBuf, file: PathBuf, settings: Arc<Mutex<Settings>>, sh
                 let audio = &cue.audio;
                 if let (Some(channels), Some(sample_rate)) = (NonZero::new(audio.channels), NonZero::new(audio.rate)) {
                     player.append(rodio::buffer::SamplesBuffer::new(channels, sample_rate, audio.samples.clone()).skip_duration(Duration::from_secs_f64(due.max(0.0))));
+                    log(format!("voice {} at {time:.2} from {:.2} s of {:.2} s", cue.id, due.max(0.0), cue.duration));
                     voice = Some(Voice { id: cue.id, player, started: now, offset: due.max(0.0) });
                 }
             }
