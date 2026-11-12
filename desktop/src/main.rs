@@ -1,12 +1,14 @@
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 //! Synchro desktop: watch local video files with Russian voiceover. Speech recognition and voices run on this
 //! computer through the bundled engine; only text translation uses the provider configured below.
 mod api;
 mod billing;
 mod config;
 mod engine;
+mod i18n;
 mod mpv;
 mod player;
+mod process;
 mod provider;
 mod ui;
 mod wav;
@@ -42,6 +44,7 @@ struct App {
     settings: Arc<Mutex<Settings>>,
     edited: Settings,
     engine: Arc<Mutex<EngineState>>,
+    _engine_process: Arc<Mutex<Option<engine::Engine>>>,
     mpv: Option<PathBuf>,
     player: Option<player::Player>,
     pending: Option<PathBuf>,
@@ -62,6 +65,7 @@ impl App {
         let settings = Settings::load();
         let translation_page = file.is_some() && settings.connection_error().is_some();
         let engine = Arc::new(Mutex::new(EngineState::Starting));
+        let engine_process: Arc<Mutex<Option<engine::Engine>>> = Default::default();
         let check: Arc<Mutex<CheckReport>> = Default::default();
         let mut mpv = None;
         match engine::Layout::find() {
@@ -75,6 +79,7 @@ impl App {
                         .is_none()
                         .then(|| settings.session()),
                 );
+                let process = engine_process.clone();
                 std::thread::spawn(move || {
                     let result = engine::Engine::start(&layout);
                     let api = result.as_ref().ok().map(|engine| engine.api.clone());
@@ -88,12 +93,13 @@ impl App {
                     }
                     *state.lock().unwrap() = match result {
                         Ok(engine) => {
-                            // The engine lives as long as the program; its job object ends it on exit.
-                            std::mem::forget(engine);
+                            *process.lock().unwrap() = Some(engine);
                             EngineState::Ready(api.clone().unwrap())
                         }
                         Err(error) => EngineState::Failed(error),
                     };
+                    drop(process);
+                    drop(state);
                     // Load the models now so the first video starts in seconds, not half a minute.
                     if let (Some(api), Some(session)) = (api, session) {
                         let checked = match api.check(session) {
@@ -110,6 +116,7 @@ impl App {
             settings: Arc::new(Mutex::new(settings.clone())),
             edited: settings,
             engine,
+            _engine_process: engine_process,
             mpv,
             player: None,
             pending: file,
@@ -185,9 +192,10 @@ impl App {
     }
 
     fn pick_video(&mut self) {
+        let l = self.edited.interface_language;
         if let Some(file) = rfd::FileDialog::new()
-            .set_title("Open a video with Synchro")
-            .add_filter("Video files", VIDEO_EXTENSIONS)
+            .set_title(l.text("Open a video with Synchro"))
+            .add_filter(l.text("Video files"), VIDEO_EXTENSIONS)
             .pick_file()
         {
             self.open(file);
@@ -375,6 +383,7 @@ mod ui_tests {
             settings: Arc::new(Mutex::new(Settings::default())),
             edited: Settings::default(),
             engine: Arc::new(Mutex::new(EngineState::Starting)),
+            _engine_process: Default::default(),
             mpv: None,
             player: None,
             pending: None,
@@ -422,76 +431,81 @@ mod ui_tests {
 
     #[test]
     fn screens_render_without_horizontal_overflow() {
-        for size in [[680.0, 560.0], [1080.0, 780.0]] {
-            for page in [
-                "watch", "cloud", "custom", "pending", "error", "catalog", "paired",
-            ] {
-                let mut app = app();
-                app.translation_page = page != "watch";
-                if page == "paired" {
-                    app.translation_page = false;
-                    app.edited.match_voice = true;
-                    app.edited.female_voice = Some("alfia".into());
-                    app.edited.male_voice = Some("eduard".into());
-                }
-                if page == "custom" {
-                    app.edited.provider = "custom".into();
-                }
-                if page == "catalog" {
-                    app.edited.model = "provider/model-with-a-long-version-id".into();
-                    app.providers.sync(&app.edited);
-                    *app.providers.models.lock().unwrap() = provider::Fetch::Ready(Ok(vec![api::Model {
-                        id: app.edited.model.clone(), name: "A provider model name with a very long description and release version for a narrow window".into(),
-                        input_price: Some(0.000001), output_price: Some(0.000002),
-                    }]), std::time::Instant::now());
-                    *app.providers.balance.lock().unwrap() = provider::Fetch::Ready(
-                        Ok(api::Balance {
-                            balance_usd: Some(0.0),
-                            total_spent_usd: Some(0.0),
-                            ..Default::default()
-                        }),
-                        std::time::Instant::now(),
-                    );
-                }
-                if page == "pending" {
-                    app.pending = Some(PathBuf::from(
-                        "A video selected before setting up translation.mkv",
-                    ));
-                }
-                if page == "error" {
-                    app.translation_page = false;
-                    app.edited.api_key = "test-key".into();
-                    app.current_file = Some(PathBuf::from(
-                        "A very long video filename with spaces and more information about the video.mkv",
-                    ));
-                    app.playback_error = Some("The translation provider is unavailable. Check your connection and try opening the video again.".into());
-                    *app.engine.lock().unwrap() = EngineState::Failed("Could not start the speech engine. The runtime or model files may be missing.".into());
-                }
-                let ctx = egui::Context::default();
-                ui::configure(&ctx);
-                let screen =
-                    egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(size[0], size[1]));
-                for pass in 0..3 {
-                    let mut output = ctx.run_ui(
-                        egui::RawInput {
-                            screen_rect: Some(screen),
-                            ..Default::default()
-                        },
-                        |ui| app.draw(ui),
-                    );
-                    output.textures_delta.clear();
-                    if pass < 2 {
-                        continue;
+        for language in [i18n::Language::English, i18n::Language::Russian] {
+            for size in [[680.0, 560.0], [1080.0, 780.0]] {
+                for page in [
+                    "watch", "cloud", "custom", "pending", "error", "catalog", "paired",
+                ] {
+                    let mut app = app();
+                    app.edited.interface_language = language;
+                    app.translation_page = page != "watch";
+                    if page == "paired" {
+                        app.translation_page = false;
+                        app.edited.match_voice = true;
+                        app.edited.female_voice = Some("alfia".into());
+                        app.edited.male_voice = Some("eduard".into());
                     }
-                    for shape in &output.shapes {
-                        if let egui::Shape::Text(text) = &shape.shape {
-                            let bounds = text.visual_bounding_rect();
-                            if bounds.intersects(shape.clip_rect) {
-                                assert!(
-                                    bounds.left() >= -1.0 && bounds.right() <= screen.right() + 1.0,
-                                    "{page} at {size:?}: {:?} at {bounds:?}",
-                                    text.galley.job.text
-                                );
+                    if page == "custom" {
+                        app.edited.provider = "custom".into();
+                    }
+                    if page == "catalog" {
+                        app.edited.model = "provider/model-with-a-long-version-id".into();
+                        app.providers.sync(&app.edited);
+                        *app.providers.models.lock().unwrap() = provider::Fetch::Ready(Ok(vec![api::Model {
+                            id: app.edited.model.clone(), name: "A provider model name with a very long description and release version for a narrow window".into(),
+                            input_price: Some(0.000001), output_price: Some(0.000002),
+                        }]), std::time::Instant::now());
+                        *app.providers.balance.lock().unwrap() = provider::Fetch::Ready(
+                            Ok(api::Balance {
+                                balance_usd: Some(0.0),
+                                total_spent_usd: Some(0.0),
+                                ..Default::default()
+                            }),
+                            std::time::Instant::now(),
+                        );
+                    }
+                    if page == "pending" {
+                        app.pending = Some(PathBuf::from(
+                            "A video selected before setting up translation.mkv",
+                        ));
+                    }
+                    if page == "error" {
+                        app.translation_page = false;
+                        app.edited.api_key = "test-key".into();
+                        app.current_file = Some(PathBuf::from(
+                            "A very long video filename with spaces and more information about the video.mkv",
+                        ));
+                        app.playback_error = Some("The translation provider is unavailable. Check your connection and try opening the video again.".into());
+                        *app.engine.lock().unwrap() = EngineState::Failed("Could not start the speech engine. The runtime or model files may be missing.".into());
+                    }
+                    let ctx = egui::Context::default();
+                    ui::configure(&ctx);
+                    let screen =
+                        egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(size[0], size[1]));
+                    for pass in 0..3 {
+                        let mut output = ctx.run_ui(
+                            egui::RawInput {
+                                screen_rect: Some(screen),
+                                ..Default::default()
+                            },
+                            |ui| app.draw(ui),
+                        );
+                        output.textures_delta.clear();
+                        if pass < 2 {
+                            continue;
+                        }
+                        assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,
+                            egui::Shape::Text(text) if text.galley.job.text == language.text("Translation"))));
+                        for shape in &output.shapes {
+                            if let egui::Shape::Text(text) = &shape.shape {
+                                let bounds = text.visual_bounding_rect();
+                                if bounds.intersects(shape.clip_rect) {
+                                    assert!(
+                                        bounds.left() >= -1.0 && bounds.right() <= screen.right() + 1.0,
+                                        "{page} at {size:?}: {:?} at {bounds:?}",
+                                        text.galley.job.text
+                                    );
+                                }
                             }
                         }
                     }

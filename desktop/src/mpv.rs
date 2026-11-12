@@ -1,20 +1,63 @@
-//! mpv plays the video; Synchro controls it over mpv's JSON IPC named pipe.
+//! mpv plays the video; Synchro controls it over a named pipe or private Unix socket.
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Write};
-use std::os::windows::process::CommandExt;
+use crate::process::Process;
+#[cfg(windows)]
+type Pipe = std::fs::File;
+#[cfg(unix)]
+type Pipe = std::os::unix::net::UnixStream;
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::time::Duration;
 
 pub struct Mpv {
-    child: Child,
-    reader: BufReader<std::fs::File>,
-    writer: std::fs::File,
+    child: Process,
+    reader: BufReader<Pipe>,
+    writer: Pipe,
+    #[cfg(unix)]
+    _socket_dir: tempfile::TempDir,
     next_id: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "requires SYNCHRO_TEST_MPV and SYNCHRO_TEST_VIDEO; opens the real player"]
+    fn native_player_controls_and_cleanup() {
+        let binary = std::env::var_os("SYNCHRO_TEST_MPV").expect("Set SYNCHRO_TEST_MPV");
+        let video = std::env::var_os("SYNCHRO_TEST_VIDEO").expect("Set SYNCHRO_TEST_VIDEO");
+        let mut player = Mpv::open(Path::new(&binary), Path::new(&video), "Synchro IPC test").unwrap();
+        for _ in 0..100 {
+            if player.number("duration").is_some() { break; }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(player.number("duration").unwrap() > 5.0);
+        for volume in [0.0, 25.0, 100.0] {
+            player.set("volume", json!(volume));
+            assert!((player.number("volume").unwrap() - volume).abs() < 0.01);
+        }
+        player.set("speed", json!(0.75));
+        assert_eq!(player.number("speed"), Some(0.75));
+        player.set("pause", json!(true));
+        assert_eq!(player.flag("pause"), Some(true));
+        player.request(json!(["seek", 3.0, "absolute+exact"])).unwrap();
+        for _ in 0..100 {
+            if player.number("time-pos").is_some_and(|time| (time - 3.0).abs() < 0.2) { break; }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!((player.number("time-pos").unwrap() - 3.0).abs() < 0.2);
+        player.set("pause", json!(false));
+        assert_eq!(player.flag("pause"), Some(false));
+        player.quit();
+        assert!(!player.alive());
+    }
 }
 
 impl Mpv {
     pub fn open(mpv: &Path, file: &Path, title: &str) -> Result<Mpv, String> {
+        #[cfg(windows)]
         let pipe = format!(
             r"\\.\pipe\synchro-mpv-{}-{}",
             std::process::id(),
@@ -23,8 +66,12 @@ impl Mpv {
                 .unwrap_or_default()
                 .as_millis()
         );
-        let mut child = Command::new(mpv)
-            .arg(format!("--input-ipc-server={pipe}"))
+        #[cfg(unix)]
+        let socket_dir = tempfile::Builder::new().prefix("synchro-mpv-").tempdir_in("/tmp").map_err(|e| e.to_string())?;
+        #[cfg(unix)]
+        let pipe = socket_dir.path().join("ipc").to_string_lossy().into_owned();
+        let mut command = Command::new(mpv);
+        command.arg(format!("--input-ipc-server={pipe}"))
             .args([
                 "--no-config",
                 "--pause",
@@ -41,24 +88,22 @@ impl Mpv {
             .arg(file)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .creation_flags(0x0800_0000)
-            .spawn()
-            .map_err(|e| format!("Could not start mpv ({}): {e}", mpv.display()))?;
-        // The video window closes with Synchro, even after a crash.
-        let _ = crate::engine::adopt(&child);
+            .stderr(Stdio::null());
+        let mut child = Process::spawn(&mut command).map_err(|e| format!("Could not start mpv ({}): {e}", mpv.display()))?;
         for _ in 0..100 {
-            if let Ok(pipe) = std::fs::OpenOptions::new()
-                .read(true)
-                .write(true)
-                .open(&pipe)
-            {
+            #[cfg(windows)]
+            let connected = std::fs::OpenOptions::new().read(true).write(true).open(&pipe);
+            #[cfg(unix)]
+            let connected = Pipe::connect(&pipe);
+            if let Ok(pipe) = connected {
                 let writer = pipe.try_clone().map_err(|e| e.to_string())?;
                 return Ok(Mpv {
                     child,
                     reader: BufReader::new(pipe),
                     writer,
                     next_id: 1,
+                    #[cfg(unix)]
+                    _socket_dir: socket_dir,
                 });
             }
             if let Ok(Some(_)) = child.try_wait() {
@@ -66,7 +111,7 @@ impl Mpv {
             }
             std::thread::sleep(Duration::from_millis(100));
         }
-        let _ = child.kill();
+        child.kill();
         Err("mpv did not open its control channel".into())
     }
 
@@ -123,13 +168,5 @@ impl Mpv {
     pub fn quit(&mut self) {
         let _ = self.request(json!(["quit"]));
         let _ = self.child.wait();
-    }
-}
-
-impl Drop for Mpv {
-    fn drop(&mut self) {
-        if self.alive() {
-            let _ = self.child.kill();
-        }
     }
 }

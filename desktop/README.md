@@ -1,5 +1,12 @@
 # Synchro Desktop for Windows
 
+For the native Apple Silicon app, installation and builds, see the [macOS guide](MACOS.md).
+
+The Windows and macOS apps include English and Russian interfaces. Choose **Language → Русский** in the
+footer to switch immediately; the choice is saved automatically. This setting is separate from **Video language**
+and does not restart playback or translation. Existing settings keep English until you change it. The Windows
+installer also offers English and Russian.
+
 Watch your own video files with a synchronized Russian voiceover. Synchro Desktop is a video player (built on
 [mpv](https://mpv.io)) with a speech engine that runs entirely on your computer's CPU: it recognizes the original
 speech, marks Russian word stress and speaks the translation. Only the recognized **text** is sent for
@@ -253,6 +260,7 @@ flowchart LR
   while the voice speaks, pauses when translation is not ready, and restarts translation after a seek.
 - English is recognized by GigaAM Multilingual; Chinese, Korean and Japanese by SenseVoice-Small. Phrases are split
   by pauses and sentence ends, translated as a whole window and then aligned back to the phrases.
+  English fragments decoded phonetically into Cyrillic fall back to the bundled SenseVoice model.
 
 ## Building from source
 

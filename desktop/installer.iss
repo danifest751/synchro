@@ -1,4 +1,4 @@
-; Synchro desktop installer: the player, its engine runtime, CPU models, FFmpeg and mpv.
+﻿; Synchro desktop installer: the player, its engine runtime, CPU models, FFmpeg and mpv.
 ; Built by desktop/build_bundle.py, which passes AppVersion, Bundle and Output.
 #ifndef AppVersion
   #define AppVersion "0.0.0"
@@ -28,8 +28,18 @@ WizardStyle=modern
 UninstallDisplayIcon={app}\Synchro.exe
 UninstallDisplayName=Synchro
 
+[Languages]
+Name: "english"; MessagesFile: "compiler:Default.isl"
+Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
+
+[CustomMessages]
+english.CreateDesktopShortcut=Create a desktop shortcut
+russian.CreateDesktopShortcut=Создать ярлык на рабочем столе
+english.StartSynchro=Start Synchro
+russian.StartSynchro=Запустить Synchro
+
 [Tasks]
-Name: desktopicon; Description: "Create a desktop shortcut"; Flags: unchecked
+Name: desktopicon; Description: "{cm:CreateDesktopShortcut}"; Flags: unchecked
 
 [Files]
 Source: "{#Bundle}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
@@ -52,4 +62,4 @@ Root: HKCU; Subkey: "Software\Classes\Applications\Synchro.exe\SupportedTypes"; 
 Root: HKCU; Subkey: "Software\Classes\Applications\Synchro.exe\SupportedTypes"; ValueType: string; ValueName: ".ts"; ValueData: ""
 
 [Run]
-Filename: "{app}\Synchro.exe"; Description: "Start Synchro"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\Synchro.exe"; Description: "{cm:StartSynchro}"; Flags: nowait postinstall skipifsilent

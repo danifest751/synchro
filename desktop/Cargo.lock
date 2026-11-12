@@ -3746,11 +3746,13 @@ dependencies = [
  "base64",
  "dirs",
  "eframe",
+ "libc",
  "reqwest",
  "rfd",
  "rodio",
  "serde",
  "serde_json",
+ "tempfile",
  "windows-sys 0.61.2",
 ]
 

@@ -64,10 +64,14 @@ class HostPipeline(Pipeline):
                 sess_options=options, providers=['CPUExecutionProvider']).with_timestamps()
         samples = np.frombuffer(pcm, dtype='<i2').astype(np.float32) / 32768
         result = self.host_asr.recognize(samples, sample_rate=RATE)
-        # Whisper is an optional install (the desktop app ships without it).
-        if os.environ.get('SYNCHRO_HOST_WHISPER_MODEL') and (re.search(r'[А-Яа-яЁё]', result.text) or not result.text.strip() and np.any(samples)):
-            logging.getLogger('uvicorn.error').info('host_asr engine=whisper device=cpu reason=empty_or_alphabet')
-            return self.whisper_cpu(pcm, 'en')
+        if re.search(r'[А-Яа-яЁё]', result.text) or not result.text.strip() and np.any(samples):
+            # Some English audio is decoded phonetically into Cyrillic; use an English-capable fallback.
+            if os.environ.get('SYNCHRO_HOST_WHISPER_MODEL'):
+                logging.getLogger('uvicorn.error').info('host_asr engine=whisper device=cpu reason=empty_or_alphabet')
+                return self.whisper_cpu(pcm, 'en')
+            if self.sensevoice.path:
+                logging.getLogger('uvicorn.error').info('host_asr engine=sensevoice device=cpu reason=empty_or_alphabet')
+                return self.sensevoice.recognize(pcm, 'en')
         # Reuse the worker's CTC decoder; run_host.py adds the repository to sys.path.
         from deploy.gigaam_server import word_timestamps
         return {'text': result.text, 'words': word_timestamps(result.tokens, result.timestamps, len(pcm) / (RATE * 2))}

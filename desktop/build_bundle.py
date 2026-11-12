@@ -16,13 +16,12 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+from bundle_assets import ROOT, MODELS, copy, copy_engine_models
 DIST = ROOT / 'desktop' / 'dist'
 BUNDLE = DIST / 'Synchro'
 PYTHON = ('https://github.com/astral-sh/python-build-standalone/releases/download/20261110/'
           'cpython-3.12.16+20261110-x86_64-pc-windows-msvc-install_only.tar.gz')
 PYTHON_SHA256 = 'e23fe5b16926de1d81661b1a97352e89fb167549c55a6825796ccd0f32ec7f1b'
-MODELS = ROOT / '.local' / 'host-models'
 TOOLS = ROOT / '.local' / 'host-tools'
 INNO = [Path(r'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'), Path.home() / r'AppData\Local\Programs\Inno Setup 6\ISCC.exe']
 
@@ -33,14 +32,6 @@ def step(text):
 
 def run(*args, **kwargs):
     subprocess.run([str(arg) for arg in args], check=True, **kwargs)
-
-
-def copy(source, target):
-    target.parent.mkdir(parents=True, exist_ok=True)
-    if source.is_dir():
-        shutil.copytree(source, target, ignore=shutil.ignore_patterns('__pycache__', '*.pyc', '.cache'))
-    else:
-        shutil.copy2(source, target)
 
 
 def runtime():
@@ -70,26 +61,10 @@ def runtime():
 
 def payload():
     step('engine code, models, FFmpeg and mpv')
-    sys.path.insert(0, str(ROOT / 'server'))
-    from synchro.speaker import install_model
-    install_model(MODELS / 'speaker/model.onnx')
-    copy(MODELS / 'speaker/model.onnx', BUNDLE / 'models/speaker/model.onnx')
-    copy(ROOT / 'desktop/licenses', BUNDLE / 'licenses')
-    copy(ROOT / 'server' / 'synchro', BUNDLE / 'engine' / 'synchro')
-    copy(ROOT / 'deploy' / 'gigaam_server.py', BUNDLE / 'engine' / 'deploy' / 'gigaam_server.py')
-    for name in ['config.json', 'multilingual_ctc.onnx', 'multilingual_vocab.txt']:
-        copy(MODELS / 'gigaam' / name, BUNDLE / 'models' / 'gigaam' / name)
-    for name in ['model.int8.onnx', 'tokens.txt']:
-        copy(MODELS / 'sensevoice' / name, BUNDLE / 'models' / 'sensevoice' / name)
-    for name in ['dictionary', 'nn']:
-        copy(MODELS / 'ruaccent' / name, BUNDLE / 'models' / 'ruaccent' / name)
-    copy(MODELS / 'silero-cis.pt', BUNDLE / 'models' / 'silero' / 'v5_cis_base_nostress.pt')
+    copy_engine_models(BUNDLE)
     copy(TOOLS / 'ffmpeg.exe', BUNDLE / 'tools' / 'ffmpeg.exe')
     for name in ['mpv.exe', 'd3dcompiler_43.dll', 'mpv']:
         copy(TOOLS / 'mpv' / name, BUNDLE / 'mpv' / name)
-    for name in ['LICENSE', 'THIRD_PARTY_NOTICES.md']:
-        copy(ROOT / name, BUNDLE / name)
-    copy(ROOT / 'desktop' / 'README.md', BUNDLE / 'README.md')
 
 
 def player():

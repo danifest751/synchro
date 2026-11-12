@@ -91,3 +91,12 @@ https://github.com/JaesungHuh/voice-gender-classifier . This model and export
 are MIT-licensed. Copyright (c) 2024 JaesungHuh; Copyright (c) 2024 Tao Ruijie;
 Copyright (c) 2026 Alice Sabrina Ivy. The full license is distributed in
 `desktop/licenses/speaker-model-LICENSE.txt` and the bundle's `licenses/` folder.
+
+The Apple Silicon macOS desktop bundle uses the same engine, models and portable CPython distribution.
+Its mpv.app is the upstream mpv CI build bcde6b93c (macOS 15 arm64), including that build's bundled libraries:
+https://github.com/mpv-player/mpv/releases/tag/git-release . Corresponding mpv source and build configuration:
+https://github.com/mpv-player/mpv/tree/bcde6b93c .
+FFmpeg 9.0.2 is built from https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz with system Apple libraries,
+without GPL/nonfree options (LGPL-2.1-or-later); configure flags are in `desktop/build_macos.py`.
+Package licenses are retained in `Contents/Resources/runtime/lib/python3.12/site-packages` and the bundled
+mpv.app; `Contents/Resources/licenses/macos-tools.txt` records the exact artifact and source URLs.

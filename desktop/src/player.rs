@@ -484,7 +484,7 @@ fn schedule(
         if (preparing || held && wanted || s.error.is_some())
             && notice.elapsed() > Duration::from_millis(900)
         {
-            let text = format!("Synchro: {}", s.status);
+            let text = format!("Synchro: {}", config.interface_language.message(&s.status));
             notice = now;
             drop(s);
             mpv.show(&text, 1000);

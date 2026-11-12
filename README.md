@@ -2,7 +2,7 @@
 
 **Russian voiceover for English, Chinese, Korean, and Japanese video.** Synchro recognizes the original speech,
 translates it, and speaks it in Russian in sync with the picture — on YouTube through a browser extension, or for
-your own video files in a Windows desktop player. Speech recognition and the voices run on your own hardware; only
+your own video files in a Windows or Apple Silicon macOS desktop player. Speech recognition and the voices run on your own hardware; only
 the recognized text goes to a translation model you choose, which can also be local.
 
 [![MIT license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -15,7 +15,7 @@ the recognized text goes to a translation model you choose, which can also be lo
 | | [Synchro Desktop](desktop/README.md) | [Browser extension + server](docs/USER_GUIDE.md) |
 | --- | --- | --- |
 | Watches | Local files: MP4, MKV, AVI, MOV, WebM, HEVC, AV1… | YouTube in its native player; other sites by tab capture |
-| Runs on | One Windows PC (CPU with AVX2) | Chrome or Edge, plus a Synchro server you host |
+| Runs on | Windows (CPU with AVX2) or macOS 15+ (Apple Silicon) | Chrome or Edge, plus a Synchro server you host |
 | Speech recognition and voices | Your PC's CPU, bundled in the installer | Your server (CPU, optional GPU), or the viewer's PC |
 | Translation | OpenRouter, Kilo Gateway, OpenAI, or any OpenAI-compatible address | The server's local model, or OpenRouter, Kilo Gateway, OpenAI |
 | Setup | Run the installer, paste a key | Deploy the server, load the extension |
@@ -62,6 +62,12 @@ the recognized text goes to a translation model you choose, which can also be lo
 4. **Open video…**, or right-click a file → **Open with → Synchro**.
 
 Details: [desktop guide](desktop/README.md).
+
+### Desktop player (macOS)
+
+The native Apple Silicon test build uses a self-contained `.app` and drag-to-install `.dmg`.
+See the [macOS guide](desktop/MACOS.md) for installation, requirements and building on a Mac.
+The Windows release linked above does not contain the Mac build.
 
 ### Browser extension with your own server
 
@@ -122,7 +128,7 @@ In the fully cloud mode, audio and speech also go to the chosen provider. Synchr
 | --- | --- |
 | [`server/`](server) | Python engine and gateway (FastAPI): recognition, translation, alignment, speech, sessions |
 | [`extension/`](extension) | Manifest V3 extension: YouTube overlay, tab capture player, settings, browser relay |
-| [`desktop/`](desktop) | Rust desktop player (mpv, egui) and its Windows installer |
+| [`desktop/`](desktop) | Rust desktop player (mpv, egui), Windows installer and Apple Silicon macOS bundle |
 | [`deploy/`](deploy) | Inference workers, Dockerfiles, service examples, Caddy and tunnel examples |
 | [`tools/`](tools) | Configuration, client keys, packaging, extension updater, smoke tests |
 | [`docs/`](docs) | User, deployment, API, architecture, cloud, models and troubleshooting guides |
@@ -153,7 +159,7 @@ python -m pip install -r server/requirements.txt
 cd server && python -m unittest discover -s tests && cd ..
 node --test tests/*.test.mjs
 python -m unittest discover -s tests -p 'test_*.py'
-cargo test --manifest-path desktop/Cargo.toml   # Windows
+cargo test --manifest-path desktop/Cargo.toml   # Windows or macOS
 python tools/package.py                          # extension ZIP
 ```
 

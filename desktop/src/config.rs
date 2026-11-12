@@ -36,6 +36,7 @@ pub const LANGUAGES: [(&str, &str); 4] = [
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
+    pub interface_language: crate::i18n::Language,
     pub provider: String,
     pub model: String,
     pub api_key: String,
@@ -58,6 +59,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Settings {
+            interface_language: Default::default(),
             provider: "openrouter".into(),
             model: String::new(),
             api_key: String::new(),
@@ -112,7 +114,7 @@ impl Settings {
 
     pub fn save(&self) -> Result<(), String> {
         // shortcut: the key is stored as plain JSON in the user's profile, like the extension's storage; use DPAPI if shared PCs matter.
-        let p = path().ok_or("Windows settings folder is unavailable")?;
+        let p = path().ok_or("The settings folder is unavailable")?;
         std::fs::create_dir_all(p.parent().unwrap()).map_err(|e| e.to_string())?;
         let data = serde_json::to_vec_pretty(self).map_err(|e| e.to_string())?;
         std::fs::write(p, data).map_err(|e| e.to_string())
@@ -162,6 +164,27 @@ pub fn label<'a>(items: &[(&'a str, &'a str)], id: &str) -> &'a str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn interface_language_round_trip_preserves_translation_settings() {
+        let mut settings: Settings = serde_json::from_value(json!({
+            "provider":"kilo", "api_key":"existing-key", "language":"ja", "voice":"eduard",
+            "model":"chosen/model", "match_voice":true, "original_volume":0.7,
+        })).unwrap();
+        assert_eq!(settings.interface_language, crate::i18n::Language::English);
+        let session = settings.session();
+        settings.interface_language = crate::i18n::Language::Russian;
+        let saved = serde_json::to_value(&settings).unwrap();
+        assert_eq!(saved["interface_language"], "ru");
+        let restored: Settings = serde_json::from_value(saved).unwrap();
+        assert_eq!(restored.interface_language, crate::i18n::Language::Russian);
+        assert_eq!(restored.session(), session); // Changing the UI language never restarts translation.
+        assert_eq!(restored.api_key, "existing-key");
+        assert_eq!(restored.original_volume, 0.7);
+        let unknown: Settings = serde_json::from_value(json!({"interface_language":"future-language", "api_key":"existing-key"})).unwrap();
+        assert_eq!(unknown.interface_language, crate::i18n::Language::English);
+        assert_eq!(unknown.api_key, "existing-key");
+    }
 
     #[test]
     fn assigned_voices_are_saved_and_retained_in_single_voice_mode() {
