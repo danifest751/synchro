@@ -22,6 +22,10 @@ def record_usage(stage, usage=None):
     entry = totals.setdefault(stage, {'requests': 0, 'reported_cost_usd': 0, 'unpriced_requests': 0})
     entry['requests'] += 1
     cost = usage.get('cost') if isinstance(usage, dict) else None
+    if cost is None and isinstance(usage, dict):
+        microdollars = usage.get('cost_microdollars')
+        if type(microdollars) in (int, float) and math.isfinite(microdollars) and microdollars >= 0:
+            cost = microdollars / 1_000_000
     if type(cost) in (int, float) and math.isfinite(cost) and cost >= 0:
         entry['reported_cost_usd'] += cost
     else:

@@ -86,6 +86,7 @@ impl Engine {
             .env("SYNCHRO_ORIGIN", format!("chrome-extension://{}", "a".repeat(32)))
             .env("SYNCHRO_HOST_ASR_MODEL", models.join("gigaam"))
             .env("SYNCHRO_SENSEVOICE_MODEL", models.join("sensevoice"))
+            .env("SYNCHRO_SPEAKER_MODEL", models.join("speaker/model.onnx"))
             .env("SYNCHRO_HOST_ACCENT_MODEL", models.join("ruaccent"))
             .env("SYNCHRO_HOST_TTS_MODEL", &layout.silero)
             .env_remove("SYNCHRO_HOST_WHISPER_MODEL")

@@ -8,6 +8,8 @@ including a model running on your own machine.
 
 - English, Chinese, Korean and Japanese videos.
 - Five Russian voices (Silero V5 CIS): Albina, Alfia, Roman, Eduard, Alexander.
+- Local speaker cues guide masculine/feminine first-person grammar, with optional automatic voice matching.
+- Searchable Kilo/OpenRouter model catalogs, balances and provider-reported spending.
 - The original track stays audible between phrases and is lowered while the voice speaks.
 - Long Russian phrases slow the picture slightly so speech and video stay together; pauses play at normal speed.
 - Optional on-screen captions with the translation.
@@ -61,26 +63,48 @@ models, FFmpeg and mpv. Nothing is installed system-wide.
 
 ## First start
 
-1. Start **Synchro**. The window shows *Starting the speech engine…*, then *Speech engine ready*.
-2. Choose a **translation provider** and paste its **API key** (see below). Settings are saved immediately.
-3. Pick a **voice** and the **video language**.
-4. Optionally press **Check translation**. The first check loads the speech models (about 20–30 s on a typical
-   laptop); afterwards models are loaded automatically at every start, so videos open in seconds.
+1. Start **Synchro**. The header shows *Engine starting*, then *Engine ready*.
+2. Open the **Translation** tab, choose a **translation provider** and paste its **API key** (see below).
+   For a local model, choose **OpenAI-compatible address** and enter the server address. Settings save automatically;
+   a save failure is shown in the footer with a **Retry** action.
+3. In **Watch**, pick a **Russian voice** and the **video language** in the voiceover panel.
+4. Optionally press **Check connection** on the **Translation** tab. The first check loads the speech models
+   (about 20–30 s on a typical laptop); afterwards models are loaded automatically at every start, so videos open in seconds.
 
 | Setting | Meaning |
 | --- | --- |
 | Translation provider | Where the recognized text is translated |
 | Server address | Only for *OpenAI-compatible address*: the API base URL, e.g. `http://127.0.0.1:1234/v1` |
-| Model | Leave empty for the provider's default; any model ID the provider accepts |
+| Model | Search the Kilo/OpenRouter catalog or enter an ID manually; leave empty for the provider default |
 | API key | Required for cloud providers; optional for a local server |
-| Voice | One of the five Russian voices |
+| Russian voice | The single voice used in One voice mode, also the fallback for uncertain speakers |
+| Voice mode | One voice for all speech, or By speaker with separate assigned voices |
+| Female speaker / Male speaker | Your chosen voices for each detected speaker type in By speaker mode |
 | Video language | The language spoken in the video: English, Chinese, Korean or Japanese |
 | Voiceover volume | Loudness of the Russian voice |
-| Original volume | Loudness of the original track between phrases (it is lowered automatically during speech) |
-| Captions | Show each translated phrase on screen |
+| Original audio | Linear volume of the original track; slider changes apply immediately |
+| Lower original during voiceover | Keep half the selected original volume during translated speech; turn off for full selected volume |
+| Speaker grammar | Auto from voice, forced Feminine/Masculine, or text only |
+| Show translated captions | Show each translated phrase on screen |
 
-Changing the voice or the language while a video plays translates again from the current position. Volumes and
-captions apply immediately.
+The layout stacks vertically in a smaller window; scroll to reach the remaining controls.
+
+Changing translation settings, the voice, language or speaker grammar while a video plays translates again from
+the current position after a short pause in editing. Volumes and captions apply immediately. Provider keys and
+selected models are remembered separately; switching providers does not send the previous provider's key.
+
+**Speaker grammar.** The bundled ECAPA-TDNN classifier runs locally on CPU for each speech phrase. It guides
+first-person forms such as “я сделал / я сделала”; the selected synthesis voice is not used as evidence about
+the original speaker. Voice mode and speaker grammar are independent: One voice can still use the correct
+masculine/feminine wording, and By speaker can change voices even with grammar set to Use text only.
+Short, noisy, ambiguous or mixed-speaker phrases can remain unspecified. This is a
+probabilistic voice cue, and errors remain possible; use the manual Feminine/Masculine override for a single
+speaker when needed. Choose **One voice** to keep one synthesis voice throughout the video (the default for older settings without an
+explicit voice mode). Choose **By speaker** to assign a **Female speaker** voice (Albina or Alfia) and a **Male
+speaker** voice (Roman, Eduard or Alexander). The assignments are saved and retained when switching modes.
+Uncertain speakers use the voice selected in One voice mode.
+With HY-MT2, grammar correction uses an additional Gemma request to the same provider because HY-MT2 does not
+follow grammar instructions. The spending total includes this stage.
 
 ## Choosing a translation provider
 
@@ -105,9 +129,31 @@ works. Choose *OpenAI-compatible address* and enter, for example:
 
 The key can stay empty for local servers. With a local model nothing leaves your computer at all.
 
+## Balances and spending
+
+The **Translation** tab loads the provider's compatible model catalog with search and input/output prices per
+million tokens. A manual model ID remains available if the catalog cannot be reached.
+
+**Account & spending** refreshes every minute, or when you press **Refresh account & models**:
+
+- **Kilo:** account balance from the service.
+- **OpenRouter:** key usage and remaining key allowance from a normal translation key. This allowance is not the
+  account balance. The optional **Account balance key** field accepts a separate OpenRouter management key to
+  retrieve account credits and total account spending. This key stays in memory for the app run and is sent only
+  to the balance endpoint; it is never used for translation or saved to disk.
+- **This provider · app run:** confirmed request costs since the app started, including connection checks, retries,
+  translation, grammar correction and phrase alignment. The Watch screen also shows the cost of the current video,
+  including seeks and changes of settings. These counters reset when the app closes.
+
+Missing provider prices are reported as unpriced requests, rather than assumed to be free. A partial total may be
+lower than the final charge. Account-wide spending may include activity from other applications; the app-run and
+video totals count Synchro requests only. OpenAI/custom endpoints have no balance integration.
+
 ## Watching a video
 
-1. **Open video…** in the Synchro window, or right-click a file in Explorer → **Open with → Synchro**.
+1. Click **Open video** in **Watch**, press **Ctrl+O**, drag a video onto Synchro, or right-click a file in Explorer
+   → **Open with → Synchro**. If translation still needs setup, the selected file is kept on the **Translation** tab;
+   finish the settings and click **Continue to video**.
 2. The mpv window opens paused and shows *Synchro: Translating ahead…*. Playback starts by itself once the first
    ten seconds are translated (a few seconds after the models are loaded).
 3. Synchro keeps about half a minute of translation ahead of the picture. If translation falls behind (a slow
@@ -123,7 +169,8 @@ mpv's controls work as usual (Synchro manages the volume mix itself; use the sli
 | F, double-click | Full screen |
 | Q | Close the video |
 
-**Stop** in the Synchro window ends the current video. Closing the Synchro window closes the video and the engine.
+**Stop video** in the Synchro window ends the current video. The filename and any playback error remain visible
+afterwards. Closing the Synchro window closes the video and the engine.
 
 ## What leaves your computer
 
@@ -156,8 +203,8 @@ provider's response.
 
 | Symptom | What to do |
 | --- | --- |
-| *Engine failed* in the window | Open `%LOCALAPPDATA%\Synchro\engine.log` |
-| *Check failed: … HTTP 401* | The API key is wrong or revoked |
+| *Engine unavailable* in the header | Open `%LOCALAPPDATA%\Synchro\engine.log` |
+| *Connection check failed … HTTP 401* | The API key is wrong or revoked |
 | *… HTTP 402* / *credits* | Top up the provider account |
 | *Custom endpoint is unreachable* | Check that your local server is running and the address ends with `/v1` |
 | The video waits a lot | The provider is slow; try a faster model, or check your network |
@@ -216,6 +263,7 @@ script takes models and tools from the repository's private `.local` folder:
 | --- | --- |
 | `.local/host-models/gigaam` | `config.json`, `multilingual_ctc.onnx`, `multilingual_vocab.txt` (GigaAM Multilingual CTC ONNX) |
 | `.local/host-models/sensevoice` | `model.int8.onnx`, `tokens.txt` from the [sherpa-onnx SenseVoice package](https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2) |
+| `.local/host-models/speaker/model.onnx` | Pinned 16 MB ECAPA-TDNN voice cue classifier; run `python tools/prepare_speaker_model.py` (also downloaded and verified by the bundle builder) |
 | `.local/host-models/silero-cis.pt` | Silero `v5_cis_base_nostress.pt` |
 | `.local/host-models/ruaccent` | RUAccent `dictionary`, `nn` and `koziev` folders (see [HOST.md](../docs/HOST.md)) |
 | `.local/host-tools/ffmpeg.exe` | FFmpeg for Windows |
@@ -233,14 +281,16 @@ python desktop/build_bundle.py --installer-only                    # repackage d
 finished folder when a test video is given, and compiles [`installer.iss`](installer.iss) into
 `desktop/dist/installer`.
 
-For development, `cargo run --manifest-path desktop/Cargo.toml` uses the repository directly: the engine code in
+For development, first run `python tools/prepare_speaker_model.py`. Then `cargo run --manifest-path desktop/Cargo.toml` uses the repository directly: the engine code in
 `server/`, the Python environment in `.local/host-env` (`server/requirements-host.txt`), models in
 `.local/host-models`, tools in `.local/host-tools` (or mpv from the `SYNCHRO_MPV` path). Debug builds keep a
 console; `-- --self-test clip.mp4` prints the report there.
 
 | Source file | Responsibility |
 | --- | --- |
-| `src/main.rs` | Window, settings, self-test |
+| `src/main.rs` | App state, file opening, settings, self-test |
+| `src/ui.rs` | Theme, Watch and Translation screens, playback preferences |
+| `src/provider.rs`, `src/billing.rs` | Background catalog/balance refresh, account isolation and usage totals |
 | `src/engine.rs` | Engine start on loopback, job object |
 | `src/api.rs` | Engine HTTP client |
 | `src/player.rs` | Window fetching ahead, voice/picture synchronization |
@@ -262,5 +312,6 @@ listed in [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md) and [models and li
 | SenseVoice-Small | FunASR Model Open Source License (attribution required) |
 | Silero V5 CIS Base (`v5_cis_base_nostress`) | MIT |
 | RUAccent | MIT |
+| [ECAPA-TDNN speaker classifier](https://huggingface.co/Alice-Sabrina-Ivy/voice-gender-classifier-onnx-q8-v2) | MIT; full notice in `licenses/speaker-model-LICENSE.txt` |
 
 mpv and FFmpeg run as separate programs; their sources are available from the links in the notices.

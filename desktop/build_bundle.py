@@ -70,6 +70,11 @@ def runtime():
 
 def payload():
     step('engine code, models, FFmpeg and mpv')
+    sys.path.insert(0, str(ROOT / 'server'))
+    from synchro.speaker import install_model
+    install_model(MODELS / 'speaker/model.onnx')
+    copy(MODELS / 'speaker/model.onnx', BUNDLE / 'models/speaker/model.onnx')
+    copy(ROOT / 'desktop/licenses', BUNDLE / 'licenses')
     copy(ROOT / 'server' / 'synchro', BUNDLE / 'engine' / 'synchro')
     copy(ROOT / 'deploy' / 'gigaam_server.py', BUNDLE / 'engine' / 'deploy' / 'gigaam_server.py')
     for name in ['config.json', 'multilingual_ctc.onnx', 'multilingual_vocab.txt']:

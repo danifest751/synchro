@@ -85,6 +85,13 @@ export function createModelPicker({provider, model, settings, request}) {
     try {
       const result = await request('/api/translation/balance', body, balanceAbort.signal);
       if (stamp !== balanceRevision) return;
+      if (result.balance_usd == null && typeof result.key_spent_usd === 'number' && Number.isFinite(result.key_spent_usd)) {
+        balance.textContent = '—';
+        const allowance = typeof result.key_limit_remaining_usd === 'number' && Number.isFinite(result.key_limit_remaining_usd)
+          ? ` · Key allowance remaining: ${money(result.key_limit_remaining_usd)}` : '';
+        balanceStatus.textContent = `Key spent: ${money(result.key_spent_usd)}${allowance}. ${result.balance_note || 'Account balance is unavailable.'}`;
+        return;
+      }
       if (typeof result.balance_usd !== 'number' || !Number.isFinite(result.balance_usd)) throw new Error('Balance is unavailable');
       balance.textContent = new Intl.NumberFormat('en-US', {style:'currency',currency:'USD',minimumFractionDigits:2,maximumFractionDigits:4}).format(result.balance_usd);
       balanceStatus.textContent = `Updated ${new Date(result.fetched_at * 1000).toLocaleTimeString()} · personal account`;

@@ -23,7 +23,7 @@ from .pipeline import Pipeline, Session, STEP, WINDOW
 from .relay import Relay
 from .youtube import YoutubeAudio, youtube_url
 from .cloud import TranslationSettings
-from .catalog import CatalogRequest, ProviderCatalog
+from .catalog import BalanceRequest, CatalogRequest, ProviderCatalog
 from .usage import collect_usage, usage_summary
 
 if os.environ.get('SYNCHRO_HOST_MODE') == '1':
@@ -184,7 +184,8 @@ def owned(session_id, owner):
     return current
 
 
-async def reserve(owner, voice, translation=None, language='en'):
+async def reserve(owner, voice, translation=None, language='en', speaker_gender='off', match_voice=False,
+                  female_voice=None, male_voice=None):
     async with registry_lock:
         await reap()
         # One key holds one place: a seek, reload or second tab replaces the previous session.
@@ -193,7 +194,9 @@ async def reserve(owner, voice, translation=None, language='en'):
         if len(sessions) >= MAX_SESSIONS:
             raise HTTPException(503, f'All {MAX_SESSIONS} slots are occupied. Try again when a viewer finishes')
         current = Session(id=uuid.uuid4().hex, touched=time.monotonic(), voice=voice, owner=owner,
-                          translation=translation or TranslationSettings(), language=language)
+                          translation=translation or TranslationSettings(), language=language,
+                          speaker_gender=speaker_gender, match_voice=match_voice,
+                          female_voice=female_voice, male_voice=male_voice)
         sessions[current.id] = current
         return current
 
@@ -268,7 +271,8 @@ async def next_video_window(current, ready=None):
     pcm, final, step = current.pending
     if not pcm:
         current.finished = True
-        result = {'session_id': current.id, 'segments': [], 'ready_until': current.offset / 16000, 'finished': True}
+        result = {'session_id': current.id, 'segments': [], 'ready_until': current.offset / 16000, 'finished': True,
+                  'cloud_usage': usage_summary(current.usage)}
         current.last = (current.offset, result)
     else:
         result = await window_result(current, pcm, current.offset, final, step=step)
@@ -294,12 +298,16 @@ class SessionRequest(BaseModel):
     voice: Voice = 'female'
     language: Language = 'en'
     translation: TranslationSettings = Field(default_factory=TranslationSettings)
+    speaker_gender: Literal['off', 'auto', 'male', 'female'] = 'off'
+    match_voice: bool = False
+    female_voice: Literal['albina', 'alfia', 'female'] | None = None
+    male_voice: Literal['roman', 'eduard', 'alexandr', 'male', 'male-eugene'] | None = None
 
 
 @app.post('/api/session')
 async def start(body: SessionRequest | None = None, voice: Voice = 'female', owner=Depends(authenticate)):
     selected = body or SessionRequest(voice=voice)
-    current = await reserve(owner, selected.voice, selected.translation, selected.language)
+    current = await reserve(owner, selected.voice, selected.translation, selected.language, selected.speaker_gender, selected.match_voice, selected.female_voice, selected.male_voice)
     try:
         async with current.lock, asyncio.timeout(105):
             await exclusive(current, warm_session(current))
@@ -366,7 +374,7 @@ async def start_video(body: VideoRequest, owner=Depends(authenticate)):
         url = youtube_url(body.url)
     except ValueError as error:
         raise HTTPException(422, str(error))
-    current = await reserve(owner, body.voice, body.translation, body.language)
+    current = await reserve(owner, body.voice, body.translation, body.language, body.speaker_gender, body.match_voice, body.female_voice, body.male_voice)
     try:
         async with current.lock, asyncio.timeout(105):
             await exclusive(current, open_video(current, url, body.position))
@@ -392,15 +400,17 @@ async def open_file(current, path, position):
 async def start_file(body: FileRequest, owner=Depends(authenticate)):
     if not DESKTOP:
         raise HTTPException(404, 'Not found')
-    current = await reserve(owner, body.voice, body.translation, body.language)
+    current = await reserve(owner, body.voice, body.translation, body.language, body.speaker_gender, body.match_voice, body.female_voice, body.male_voice)
     try:
         async with current.lock, asyncio.timeout(105):
             await exclusive(current, open_file(current, body.path, body.position))
     except Exception as error:
         failure('file_start', error)
         await discard(current)
-        raise HTTPException(502, str(error) if isinstance(error, ValueError) else 'Could not prepare audio or models')
-    return {'session_id': current.id, 'base': current.audio.base, 'duration': current.audio.duration}
+        return JSONResponse({'detail': str(error) if isinstance(error, ValueError) else 'Could not prepare audio or models',
+                             'cloud_usage': usage_summary(current.usage)}, status_code=502)
+    return {'session_id': current.id, 'base': current.audio.base, 'duration': current.audio.duration,
+            'cloud_usage': usage_summary(current.usage)}
 
 
 @app.post('/api/translation/check')
@@ -427,12 +437,12 @@ async def check_pipeline(body: SessionRequest, owner=Depends(authenticate)):
             with collect_usage(usage):
                 await pipeline.warmup(body.voice, body.translation, body.language)
     except ValueError as error:
-        raise HTTPException(502, str(error))
+        return JSONResponse({'detail': str(error), 'cloud_usage': usage_summary(usage)}, status_code=502)
     except TimeoutError:
-        raise HTTPException(504, 'Pipeline test timed out')
+        return JSONResponse({'detail': 'Pipeline test timed out', 'cloud_usage': usage_summary(usage)}, status_code=504)
     except Exception as error:
         failure('pipeline_check', error)
-        raise HTTPException(502, 'Pipeline test failed; check inference services')
+        return JSONResponse({'detail': 'Pipeline test failed; check inference services', 'cloud_usage': usage_summary(usage)}, status_code=502)
     return {'ok': True, 'provider': body.translation.provider, 'mode': body.translation.mode,
             'translation': 'Recognition, translation and speech are available',
             'seconds': round(time.monotonic() - started, 3), 'cloud_usage': usage_summary(usage)}
@@ -448,7 +458,7 @@ async def translation_models(body: CatalogRequest, owner=Depends(authenticate)):
 
 
 @app.post('/api/translation/balance')
-async def translation_balance(body: TranslationSettings, owner=Depends(authenticate)):
+async def translation_balance(body: BalanceRequest, owner=Depends(authenticate)):
     try:
         result = await catalog.balance(body)
         return JSONResponse(result, headers={'Cache-Control': 'no-store'})
@@ -481,10 +491,12 @@ async def video_next(session_id: str, ready: float | None = Query(default=None, 
         except TimeoutError:
             warm.clear()
             logging.getLogger('uvicorn.error').warning('video_translation outcome=deadline offset_seconds=%.1f provider=%s model=%s', current.offset / 16000, current.translation.provider, current.translation.model)
-            raise HTTPException(504, 'Audio translation timed out after 105 seconds')
+            return JSONResponse({'detail': 'Audio translation timed out after 105 seconds',
+                                 'cloud_usage': usage_summary(current.usage)}, status_code=504)
         except Exception as error:
             warm.clear()
             logging.getLogger('uvicorn.error').warning('video_translation outcome=failed offset_seconds=%.1f provider=%s model=%s error_type=%s', current.offset / 16000, current.translation.provider, current.translation.model, type(error).__name__)
-            raise HTTPException(502, str(error) if isinstance(error, ValueError) else 'Audio stream translation failed')
+            return JSONResponse({'detail': str(error) if isinstance(error, ValueError) else 'Audio stream translation failed',
+                                 'cloud_usage': usage_summary(current.usage)}, status_code=502)
         finally:
             current.touched = time.monotonic()

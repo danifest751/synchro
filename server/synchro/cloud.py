@@ -163,6 +163,9 @@ async def complete(client, settings, messages, schema=None, tunnel_port=0, stage
                             'content_filter': 'translation was blocked by the provider content filter',
                             'empty_response': 'provider returned an empty translation',
                         }.get(outcome, 'provider returned an invalid translation')
+                except asyncio.CancelledError:
+                    record_usage(stage)
+                    raise
                 except httpx.HTTPError as error:
                     record_usage(stage)
                     failure = f'{name} is unreachable or timed out'

@@ -6,9 +6,9 @@ import time
 from typing import Literal
 
 import httpx
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 
-from .cloud import PROVIDERS, api_route, provider_error
+from .cloud import PROVIDERS, TranslationSettings, api_route, provider_error
 
 CATALOG_URLS = {'kilo': 'https://ai-gateway.kilo.ai/api/v1/models', 'openrouter': 'https://openrouter.ai/api/v1/models'}
 BALANCE_URLS = {'kilo': 'https://api.kilo.ai/api/profile/balance', 'openrouter': 'https://openrouter.ai/api/v1/credits'}
@@ -17,6 +17,18 @@ BALANCE_URLS = {'kilo': 'https://api.kilo.ai/api/profile/balance', 'openrouter':
 class CatalogRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
     provider: Literal['local', 'openai', 'kilo', 'openrouter']
+
+
+class BalanceRequest(TranslationSettings):
+    management_key: SecretStr = Field(default_factory=lambda: SecretStr(''))
+
+    @model_validator(mode='after')
+    def validate_management_key(self):
+        key = self.management_key.get_secret_value()
+        if key and (self.provider != 'openrouter' or not 16 <= len(key) <= 4096
+                    or any(not 33 <= ord(char) <= 126 for char in key)):
+            raise ValueError('An OpenRouter management key is required for account balance')
+        return self
 
 
 def price(value, allow_negative=False):
@@ -97,7 +109,25 @@ class ProviderCatalog:
     async def balance(self, settings):
         if settings.provider not in BALANCE_URLS:
             raise ValueError('Balance is available for Kilo Gateway and OpenRouter')
-        result = await self.get(settings.provider, BALANCE_URLS[settings.provider], settings.api_key.get_secret_value())
+        if settings.provider == 'openrouter':
+            result = await self.get('openrouter', 'https://openrouter.ai/api/v1/key', settings.api_key.get_secret_value())
+            data = result.get('data')
+            if not isinstance(data, dict) or price(data.get('usage')) is None:
+                raise ValueError('OpenRouter key usage is unavailable')
+            response = {'provider': 'openrouter', 'balance_usd': None, 'total_spent_usd': None,
+                        'key_spent_usd': price(data['usage']), 'key_limit_remaining_usd': price(data.get('limit_remaining')),
+                        'balance_note': 'Account balance requires a separate management key. The key allowance is not the account balance.',
+                        'fetched_at': int(time.time())}
+            management = getattr(settings, 'management_key', SecretStr('')).get_secret_value()
+            if not management:
+                return response
+            try:
+                result = await self.get('openrouter', BALANCE_URLS['openrouter'], management)
+            except ValueError as error:
+                return {**response, 'balance_note': str(error)}
+        else:
+            result = await self.get(settings.provider, BALANCE_URLS[settings.provider], settings.api_key.get_secret_value())
+        used = None
         if settings.provider == 'kilo':
             remaining = price(result.get('balance'), allow_negative=True)
         else:
@@ -105,8 +135,11 @@ class ProviderCatalog:
             if not isinstance(data, dict):
                 raise ValueError('Provider balance is unavailable; no balance was assumed')
             total, used = price(data.get('total_credits')), price(data.get('total_usage'))
-            remaining = max(0, total - used) if total is not None and used is not None else None
+            remaining = total - used if total is not None and used is not None else None
         if remaining is None:
             raise ValueError('Provider balance is unavailable; no balance was assumed')
         # Account-specific data must never enter the shared model cache.
-        return {'provider': settings.provider, 'balance_usd': remaining, 'fetched_at': int(time.time())}
+        if settings.provider == 'openrouter':
+            return {**response, 'balance_usd': remaining, 'total_spent_usd': used, 'balance_note': None}
+        return {'provider': settings.provider, 'balance_usd': remaining, 'total_spent_usd': used,
+                'fetched_at': int(time.time())}

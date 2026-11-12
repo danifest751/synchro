@@ -1,5 +1,5 @@
 //! mpv plays the video; Synchro controls it over mpv's JSON IPC named pipe.
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Write};
 use std::os::windows::process::CommandExt;
 use std::path::Path;
@@ -15,12 +15,27 @@ pub struct Mpv {
 
 impl Mpv {
     pub fn open(mpv: &Path, file: &Path, title: &str) -> Result<Mpv, String> {
-        let pipe = format!(r"\\.\pipe\synchro-mpv-{}-{}", std::process::id(),
-                           std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis());
+        let pipe = format!(
+            r"\\.\pipe\synchro-mpv-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis()
+        );
         let mut child = Command::new(mpv)
             .arg(format!("--input-ipc-server={pipe}"))
-            .args(["--pause", "--keep-open=yes", "--force-window=immediate", "--hr-seek=yes", "--idle=no",
-                   "--osd-duration=1500", "--volume=100"])
+            .args([
+                "--no-config",
+                "--pause",
+                "--keep-open=yes",
+                "--force-window=immediate",
+                "--hr-seek=yes",
+                "--idle=no",
+                "--osd-duration=1500",
+                "--volume=100",
+                "--mute=no",
+            ])
             .arg(format!("--title={title}"))
             .arg("--")
             .arg(file)
@@ -33,9 +48,18 @@ impl Mpv {
         // The video window closes with Synchro, even after a crash.
         let _ = crate::engine::adopt(&child);
         for _ in 0..100 {
-            if let Ok(pipe) = std::fs::OpenOptions::new().read(true).write(true).open(&pipe) {
+            if let Ok(pipe) = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&pipe)
+            {
                 let writer = pipe.try_clone().map_err(|e| e.to_string())?;
-                return Ok(Mpv { child, reader: BufReader::new(pipe), writer, next_id: 1 });
+                return Ok(Mpv {
+                    child,
+                    reader: BufReader::new(pipe),
+                    writer,
+                    next_id: 1,
+                });
             }
             if let Ok(Some(_)) = child.try_wait() {
                 break;
@@ -59,12 +83,23 @@ impl Mpv {
         self.writer.write_all(&line).map_err(|e| e.to_string())?;
         loop {
             let mut text = String::new();
-            if self.reader.read_line(&mut text).map_err(|e| e.to_string())? == 0 {
+            if self
+                .reader
+                .read_line(&mut text)
+                .map_err(|e| e.to_string())?
+                == 0
+            {
                 return Err("mpv closed".into());
             }
-            let Ok(message) = serde_json::from_str::<Value>(&text) else { continue };
+            let Ok(message) = serde_json::from_str::<Value>(&text) else {
+                continue;
+            };
             if message["request_id"] == id {
-                return if message["error"] == "success" { Ok(message["data"].clone()) } else { Err(message["error"].as_str().unwrap_or("mpv error").into()) };
+                return if message["error"] == "success" {
+                    Ok(message["data"].clone())
+                } else {
+                    Err(message["error"].as_str().unwrap_or("mpv error").into())
+                };
             }
         }
     }

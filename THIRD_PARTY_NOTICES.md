@@ -83,3 +83,11 @@ and their Python dependencies under their own licenses (see each package's
 metadata in runtime/Lib/site-packages). These programs run as separate
 processes or libraries of the bundled engine; Synchro's MIT license does not
 apply to them. Model weights retain the licenses listed above.
+
+The desktop bundle includes the ECAPA-TDNN speaker cue classifier, quantized ONNX v2:
+https://huggingface.co/Alice-Sabrina-Ivy/voice-gender-classifier-onnx-q8-v2
+(revision 8aedeb1a399945e52e6f3f61714abe07c1c48742), derived from
+https://github.com/JaesungHuh/voice-gender-classifier . This model and export
+are MIT-licensed. Copyright (c) 2024 JaesungHuh; Copyright (c) 2024 Tao Ruijie;
+Copyright (c) 2026 Alice Sabrina Ivy. The full license is distributed in
+`desktop/licenses/speaker-model-LICENSE.txt` and the bundle's `licenses/` folder.

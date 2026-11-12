@@ -4,7 +4,7 @@ import unittest
 
 import httpx
 
-from synchro.catalog import ProviderCatalog, model_entry, price
+from synchro.catalog import BalanceRequest, ProviderCatalog, model_entry, price
 from synchro.cloud import TranslationSettings
 
 
@@ -56,15 +56,44 @@ class CatalogTests(unittest.IsolatedAsyncioTestCase):
                     await catalog.balance(TranslationSettings(provider='kilo',api_key='private-test-api-key-123'))
 
     async def test_openrouter_remaining_credit_and_provider_errors(self):
-        settings=TranslationSettings(provider='openrouter',api_key='private-test-api-key-123')
-        async with httpx.AsyncClient(transport=httpx.MockTransport(lambda request:httpx.Response(200,json={'data':{'total_credits':20,'total_usage':3.25}}))) as client:
+        settings=BalanceRequest(provider='openrouter',api_key='private-test-api-key-123',management_key='private-management-key-123')
+        def respond(request):
+            if request.url.path.endswith('/key'):
+                self.assertEqual(request.headers['Authorization'], 'Bearer private-test-api-key-123')
+                return httpx.Response(200,json={'data':{'usage':2,'limit_remaining':8}})
+            self.assertEqual(request.headers['Authorization'], 'Bearer private-management-key-123')
+            return httpx.Response(200,json={'data':{'total_credits':20,'total_usage':3.25}})
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
             catalog=ProviderCatalog(SimpleNamespace(client=client,cloud_client=None,cloud_tunnels={}))
-            self.assertEqual((await catalog.balance(settings))['balance_usd'],16.75)
+            balance=await catalog.balance(settings)
+            self.assertEqual(balance['balance_usd'],16.75)
+            self.assertEqual(balance['total_spent_usd'],3.25)
+            self.assertEqual(balance['key_spent_usd'],2)
         async with httpx.AsyncClient(transport=httpx.MockTransport(lambda request:httpx.Response(401,json={'error':settings.api_key.get_secret_value()}))) as client:
             catalog=ProviderCatalog(SimpleNamespace(client=client,cloud_client=None,cloud_tunnels={}))
             with self.assertRaises(ValueError) as error:
                 await catalog.balance(settings)
             self.assertNotIn(settings.api_key.get_secret_value(),str(error.exception))
+
+    async def test_openrouter_key_allowance_is_never_presented_as_account_balance(self):
+        settings=BalanceRequest(provider='openrouter',api_key='private-test-api-key-123')
+        calls=[]
+        def respond(request):
+            calls.append(str(request.url))
+            return httpx.Response(200,json={'data':{'usage':4.25,'limit_remaining':15.75}})
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+            catalog=ProviderCatalog(SimpleNamespace(client=client,cloud_client=None,cloud_tunnels={}))
+            balance=await catalog.balance(settings)
+        self.assertIsNone(balance['balance_usd'])
+        self.assertEqual(balance['key_limit_remaining_usd'],15.75)
+        self.assertEqual(calls,['https://openrouter.ai/api/v1/key'])
+        self.assertIsNotNone(balance['balance_note'])
+
+    def test_management_keys_are_restricted_to_openrouter_balance_requests(self):
+        with self.assertRaises(ValueError):
+            BalanceRequest(provider='kilo',api_key='private-test-api-key-123',management_key='private-management-key-123')
+        with self.assertRaises(ValueError):
+            BalanceRequest(provider='openrouter',api_key='private-test-api-key-123',management_key='invalid\nkey')
 
     def test_catalog_filtering_and_price_validation(self):
         self.assertIsNotNone(model_entry(model()))
