@@ -24,8 +24,8 @@ the recognized text goes to a translation model you choose, which can also be lo
 ## Features
 
 **Voiceover**
-- Phrase-level timing: each Russian phrase starts with the original phrase; long phrases slow the video slightly and
-  pauses play at normal speed, so speech and picture stay together.
+- Phrase-level timing: each Russian phrase starts with the original phrase; long phrases slow the video to fit the
+  speech and pauses play at normal speed, so speech and picture stay together.
 - The original track stays audible between phrases and is smoothly lowered while the voice speaks.
 - Five Russian voices (Silero V5 CIS): Albina, Alfia, Roman, Eduard, Alexander, with stress marked by RUAccent.
 - Optional translated captions.

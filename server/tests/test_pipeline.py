@@ -182,7 +182,7 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
             await pipeline.client.aclose()
 
     async def test_gigaam_wrong_alphabet_or_outage_rechecks_with_whisper(self):
-        for status, text in [(200, 'w е н та ром'), (503, '')]:
+        for status, text in [(200, 'w е н та ром'), (200, ''), (503, '')]:
             with self.subTest(status=status):
                 pipeline = Pipeline('http://speech', 'http://llama', asr_url='http://gigaam', asr_token='private-asr-key')
                 await pipeline.client.aclose()

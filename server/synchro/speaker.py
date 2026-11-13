@@ -1,5 +1,6 @@
 """Local acoustic cues for grammatical gender; uncertain voices stay unspecified."""
 import hashlib
+import logging
 from pathlib import Path
 import urllib.request
 import threading
@@ -32,6 +33,7 @@ class SpeakerClassifier:
     def __init__(self, path):
         self.path = str(path)
         self.model = None
+        self.unavailable = False
         self.lock = threading.Lock()
 
     def classify(self, pcm):
@@ -39,6 +41,8 @@ class SpeakerClassifier:
             return self._classify(pcm)
 
     def _classify(self, pcm):
+        if self.unavailable:
+            return 'unknown'
         import numpy as np
         import onnxruntime as ort
 
@@ -46,12 +50,18 @@ class SpeakerClassifier:
         if len(samples) < 12000 or np.sqrt(np.mean(samples * samples)) < .008 or not has_voiced_audio(samples):
             return 'unknown'
         if self.model is None:
-            options = ort.SessionOptions()
-            options.intra_op_num_threads = 2
-            options.inter_op_num_threads = 1
-            options.add_session_config_entry('session.intra_op.allow_spinning', '0')
-            ort.disable_telemetry_events()
-            self.model = ort.InferenceSession(self.path, sess_options=options, providers=['CPUExecutionProvider'])
+            try:
+                options = ort.SessionOptions()
+                options.intra_op_num_threads = 2
+                options.inter_op_num_threads = 1
+                options.add_session_config_entry('session.intra_op.allow_spinning', '0')
+                ort.disable_telemetry_events()
+                self.model = ort.InferenceSession(self.path, sess_options=options, providers=['CPUExecutionProvider'])
+            except Exception as error:
+                # A missing or corrupt model stays broken until restart; warn once, not on every window.
+                self.unavailable = True
+                logging.getLogger('uvicorn.error').warning('speaker_model outcome=unavailable error_type=%s', type(error).__name__)
+                return 'unknown'
         # Sample across the phrase; conflicting confident cues indicate mixed speakers.
         length = min(len(samples), 24000)
         starts = sorted({0, (len(samples) - length) // 2, len(samples) - length})

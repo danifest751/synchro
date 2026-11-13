@@ -41,6 +41,22 @@ class SpeakerTests(unittest.TestCase):
         self.assertEqual(classifier.classify((noise * 32767).astype('<i2').tobytes()), 'unknown')
         self.assertIsNone(classifier.model)
 
+    @unittest.skipUnless(importlib.util.find_spec('onnxruntime'), 'onnxruntime is part of the desktop inference runtime')
+    def test_missing_model_warns_once_and_stays_unavailable(self):
+        import numpy as np
+        classifier = SpeakerClassifier('must-not-be-loaded.onnx')
+        time = np.arange(24000) / 16000
+        voiced = .3 * np.sin(2 * np.pi * 150 * time) + .2 * np.sin(2 * np.pi * 300 * time)
+        pcm = (voiced * 32767).astype('<i2').tobytes()
+        with self.assertLogs('uvicorn.error', level='WARNING') as logs:
+            self.assertEqual(classifier.classify(pcm), 'unknown')
+        self.assertTrue(classifier.unavailable)
+        self.assertIsNone(classifier.model)
+        self.assertEqual(len(logs.records), 1)
+        # Later windows must not retry the load or warn again.
+        with self.assertNoLogs('uvicorn.error', level='WARNING'):
+            self.assertEqual(classifier.classify(pcm), 'unknown')
+
 
 class SpeakerPipelineTests(unittest.IsolatedAsyncioTestCase):
     async def test_assigned_voices_and_single_voice_work_independently_of_grammar(self):

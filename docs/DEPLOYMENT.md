@@ -138,6 +138,7 @@ English uses GigaAM. Chinese, Korean, and Japanese use SenseVoice-Small through 
 | `SYNCHRO_ASR_URL`, `SYNCHRO_ASR_TOKEN` | Optional GigaAM endpoint and its private key; empty URL uses Whisper |
 | `SYNCHRO_SILERO_URL`, `SYNCHRO_SILERO_TOKEN` | Silero endpoint and private key; empty URL selects legacy Piper |
 | `SYNCHRO_SENSEVOICE_MODEL` | Optional folder with SenseVoice-Small `model.int8.onnx` and `tokens.txt` for Chinese, Korean, and Japanese |
+| `SYNCHRO_SPEAKER_MODEL` | Optional path to the voice-gender `model.onnx` for grammatical gender hints; without it, gender stays unspecified |
 | `YTDLP_PROXY` | Optional proxy for server-side YouTube access |
 | `SYNCHRO_CLOUD_PROXY` | Optional HTTPS CONNECT proxy route for cloud API calls only |
 | `SYNCHRO_KILO_TUNNEL_PORT`, `SYNCHRO_OPENROUTER_TUNNEL_PORT`, `SYNCHRO_OPENAI_TUNNEL_PORT` | Optional existing loopback TCP forwards to provider HTTPS; 0 means unset; TLS Host/SNI are preserved |

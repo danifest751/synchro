@@ -17,6 +17,6 @@ WORKDIR /app
 ENV PYTHONPATH=/app SYNCHRO_HOST_MODE=1 HF_HUB_OFFLINE=1 PYTHONUNBUFFERED=1 \
     SYNCHRO_HOST_ASR_MODEL=/models/gigaam SYNCHRO_HOST_WHISPER_MODEL=/models/whisper \
     SYNCHRO_HOST_TTS_MODEL=/models/silero/v5_cis_base_nostress.pt SYNCHRO_HOST_ACCENT_MODEL=/models/ruaccent \
-    SYNCHRO_SENSEVOICE_MODEL=/models/sensevoice
+    SYNCHRO_SENSEVOICE_MODEL=/models/sensevoice SYNCHRO_SPEAKER_MODEL=/models/speaker/model.onnx
 ENTRYPOINT ["python", "-m", "uvicorn", "synchro.app:app", "--host", "127.0.0.1", "--no-access-log"]
 CMD ["--port", "8768"]

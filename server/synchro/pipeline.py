@@ -234,7 +234,7 @@ class Pipeline:
                     headers={'Authorization': 'Bearer ' + self.asr_token, 'Content-Type': 'application/octet-stream'})
                 response.raise_for_status()
                 result = response.json()
-                if isinstance(result.get('text'), str) and not re.search(r'[А-Яа-яЁё]', result['text']):
+                if isinstance(result.get('text'), str) and result['text'].strip() and not re.search(r'[А-Яа-яЁё]', result['text']):
                     return result
             except (httpx.HTTPError, ValueError):
                 pass
@@ -503,7 +503,6 @@ class Pipeline:
                     pending = None
                 aligned.append((dict(phrase), part))
             for phrase, part in aligned:
-                available = max(.12, phrase['end'] - phrase['start'])
                 cue_start = max(session.speech_end if not segments else segments[-1]['start'] + segments[-1]['source_duration'],
                                 0, offset / RATE + phrase['start'])
                 available = max(.12, offset / RATE + phrase['end'] - cue_start)
