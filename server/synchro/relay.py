@@ -14,7 +14,7 @@ import secrets
 import threading
 from urllib.parse import parse_qs, urlsplit
 
-from yt_dlp.networking.common import RequestHandler, Response, register_preference, register_rh
+from yt_dlp.networking.common import Features, RequestHandler, Response, register_preference, register_rh
 from yt_dlp.networking.exceptions import HTTPError, TransportError, UnsupportedRequest
 
 ALLOWED_HOST = re.compile(r'(?:[a-z0-9-]+\.)*(?:youtube\.com|googlevideo\.com|ytimg\.com|youtubei\.googleapis\.com)')
@@ -72,6 +72,9 @@ class BrowserRH(RequestHandler):
     RH_KEY = 'SynchroBrowser'
     _SUPPORTED_URL_SCHEMES = ('http', 'https')
     _SUPPORTED_PROXY_SCHEMES = ('http', 'https')
+    # yt-dlp's default proxy map carries a "no" bypass list; without NO_PROXY every request fails validation
+    # and the gateway silently falls back to its own network instead of the viewer's browser.
+    _SUPPORTED_FEATURES = (Features.NO_PROXY,)
 
     def _check_extensions(self, extensions):
         for key in ('cookiejar', 'timeout', 'legacy_ssl', 'keep_header_casing', 'impersonate'):
