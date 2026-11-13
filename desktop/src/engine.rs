@@ -3,7 +3,7 @@ use crate::api::Api;
 use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hasher};
 use std::net::TcpListener;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use crate::process::Process;
 use std::time::{Duration, Instant};
@@ -61,20 +61,47 @@ pub fn log_path() -> PathBuf {
     dirs::data_local_dir().unwrap_or_else(std::env::temp_dir).join("Synchro").join("engine.log")
 }
 
+/// Keep the previous run's log so a crash that triggered a restart is still diagnosable.
+pub fn keep_previous_log(path: &Path) {
+    if path.is_file() {
+        let mut name = path.file_name().unwrap_or_default().to_os_string();
+        name.push(".1");
+        let _ = std::fs::rename(path, path.with_file_name(name));
+    }
+}
+
 impl Engine {
     pub fn start(layout: &Layout) -> Result<Engine, String> {
-        let port = TcpListener::bind("127.0.0.1:0").and_then(|l| l.local_addr()).map_err(|e| e.to_string())?.port();
+        let mut last = String::new();
+        for attempt in 0..3 {
+            match Self::start_once(layout) {
+                Ok(engine) => return Ok(engine),
+                Err((message, retryable)) => {
+                    last = message;
+                    // An early exit is usually a lost race for the ephemeral port; try a fresh one.
+                    if !retryable || attempt == 2 {
+                        break;
+                    }
+                }
+            }
+        }
+        Err(last)
+    }
+
+    fn start_once(layout: &Layout) -> Result<Engine, (String, bool)> {
+        let port = TcpListener::bind("127.0.0.1:0").and_then(|l| l.local_addr()).map_err(|e| (e.to_string(), false))?.port();
         let token = random_hex();
         let log = log_path();
         std::fs::create_dir_all(log.parent().unwrap()).ok();
-        let output = std::fs::File::create(&log).map_err(|e| format!("engine log: {e}"))?;
+        keep_previous_log(&log);
+        let output = std::fs::File::create(&log).map_err(|e| (format!("engine log: {e}"), false))?;
         let path = std::env::join_paths(std::iter::once(layout.tools.clone()).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())))
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| (e.to_string(), false))?;
         let models = &layout.models;
         let mut command = Command::new(&layout.python);
         command
             .args(["-m", "uvicorn", "synchro.app:app", "--host", "127.0.0.1", "--port", &port.to_string(), "--no-access-log"])
-            .env("PYTHONPATH", std::env::join_paths(&layout.python_path).map_err(|e| e.to_string())?)
+            .env("PYTHONPATH", std::env::join_paths(&layout.python_path).map_err(|e| (e.to_string(), false))?)
             .env("PATH", path)
             .env("PYTHONUNBUFFERED", "1")
             .env("PYTHONDONTWRITEBYTECODE", "1")
@@ -92,21 +119,41 @@ impl Engine {
             .env("SYNCHRO_HOST_TTS_MODEL", &layout.silero)
             .env_remove("SYNCHRO_HOST_WHISPER_MODEL")
             .stdin(Stdio::null())
-            .stdout(output.try_clone().map_err(|e| e.to_string())?)
+            .stdout(output.try_clone().map_err(|e| (e.to_string(), false))?)
             .stderr(output);
         let child = Process::spawn(&mut command)
-            .map_err(|e| format!("Could not start the engine ({}): {e}", layout.python.display()))?;
+            .map_err(|e| (format!("Could not start the engine ({}): {e}", layout.python.display()), false))?;
         let mut engine = Engine { child, api: Api::new(format!("http://127.0.0.1:{port}"), token) };
         let started = Instant::now();
         while started.elapsed() < Duration::from_secs(90) {
-            if engine.child.try_wait().map_err(|e| e.to_string())?.is_some() {
-                return Err(format!("The engine exited during startup; see {}", log.display()));
+            if engine.child.try_wait().map_err(|e| (e.to_string(), false))?.is_some() {
+                return Err((format!("The engine exited during startup; see {}", log.display()), true));
             }
             if engine.api.health() {
                 return Ok(engine);
             }
             std::thread::sleep(Duration::from_millis(300));
         }
-        Err(format!("The engine did not start; see {}", log.display()))
+        Err((format!("The engine did not start; see {}", log.display()), false))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn previous_log_is_kept_once_and_replaced_on_the_next_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("engine.log");
+        std::fs::write(&log, b"first run").unwrap();
+        keep_previous_log(&log);
+        assert!(!log.exists());
+        assert_eq!(std::fs::read(dir.path().join("engine.log.1")).unwrap(), b"first run");
+        std::fs::write(&log, b"second run").unwrap();
+        keep_previous_log(&log);
+        assert_eq!(std::fs::read(dir.path().join("engine.log.1")).unwrap(), b"second run");
+        // No log yet: nothing to rotate and no panic.
+        keep_previous_log(&dir.path().join("absent.log"));
     }
 }

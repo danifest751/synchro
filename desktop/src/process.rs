@@ -69,12 +69,6 @@ impl Process {
         Ok(result)
     }
 
-    pub fn wait(&mut self) -> io::Result<ExitStatus> {
-        let result = self.child.wait();
-        self.finish();
-        result
-    }
-
     pub fn kill(&mut self) {
         if self.closed { return; }
         #[cfg(unix)]

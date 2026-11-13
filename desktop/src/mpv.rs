@@ -8,51 +8,41 @@ type Pipe = std::fs::File;
 type Pipe = std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::process::{Command, Stdio};
-use std::time::Duration;
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::time::{Duration, Instant};
+
+/// Local IPC normally answers in under a millisecond; a stuck player must not block the caller forever.
+const IPC_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub struct Mpv {
     child: Process,
-    reader: BufReader<Pipe>,
+    responses: Receiver<Value>,
     writer: Pipe,
     #[cfg(unix)]
     _socket_dir: tempfile::TempDir,
     next_id: u64,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    #[ignore = "requires SYNCHRO_TEST_MPV and SYNCHRO_TEST_VIDEO; opens the real player"]
-    fn native_player_controls_and_cleanup() {
-        let binary = std::env::var_os("SYNCHRO_TEST_MPV").expect("Set SYNCHRO_TEST_MPV");
-        let video = std::env::var_os("SYNCHRO_TEST_VIDEO").expect("Set SYNCHRO_TEST_VIDEO");
-        let mut player = Mpv::open(Path::new(&binary), Path::new(&video), "Synchro IPC test").unwrap();
-        for _ in 0..100 {
-            if player.number("duration").is_some() { break; }
-            std::thread::sleep(Duration::from_millis(50));
+/// Reads mpv's line-delimited JSON on its own thread so a stalled pipe cannot block the scheduler.
+fn spawn_reader(pipe: Pipe) -> Receiver<Value> {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut reader = BufReader::new(pipe);
+        loop {
+            let mut text = String::new();
+            match reader.read_line(&mut text) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {
+                    if let Ok(message) = serde_json::from_str::<Value>(&text)
+                        && tx.send(message).is_err()
+                    {
+                        break;
+                    }
+                }
+            }
         }
-        assert!(player.number("duration").unwrap() > 5.0);
-        for volume in [0.0, 25.0, 100.0] {
-            player.set("volume", json!(volume));
-            assert!((player.number("volume").unwrap() - volume).abs() < 0.01);
-        }
-        player.set("speed", json!(0.75));
-        assert_eq!(player.number("speed"), Some(0.75));
-        player.set("pause", json!(true));
-        assert_eq!(player.flag("pause"), Some(true));
-        player.request(json!(["seek", 3.0, "absolute+exact"])).unwrap();
-        for _ in 0..100 {
-            if player.number("time-pos").is_some_and(|time| (time - 3.0).abs() < 0.2) { break; }
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        assert!((player.number("time-pos").unwrap() - 3.0).abs() < 0.2);
-        player.set("pause", json!(false));
-        assert_eq!(player.flag("pause"), Some(false));
-        player.quit();
-        assert!(!player.alive());
-    }
+    });
+    rx
 }
 
 impl Mpv {
@@ -99,7 +89,7 @@ impl Mpv {
                 let writer = pipe.try_clone().map_err(|e| e.to_string())?;
                 return Ok(Mpv {
                     child,
-                    reader: BufReader::new(pipe),
+                    responses: spawn_reader(pipe),
                     writer,
                     next_id: 1,
                     #[cfg(unix)]
@@ -119,32 +109,36 @@ impl Mpv {
         matches!(self.child.try_wait(), Ok(None))
     }
 
-    /// One request at a time from one thread: blocking reads and writes on one pipe handle would wait for each other.
+    /// One request at a time from one thread; the reader thread delivers answers with a deadline.
     pub fn request(&mut self, command: Value) -> Result<Value, String> {
+        self.request_with_timeout(command, IPC_TIMEOUT)
+    }
+
+    fn request_with_timeout(&mut self, command: Value, timeout: Duration) -> Result<Value, String> {
         let id = self.next_id;
         self.next_id += 1;
+        // Drop stale events and answers to a timed-out request so they cannot leak into this one.
+        while self.responses.try_recv().is_ok() {}
         let mut line = serde_json::to_vec(&json!({"command": command, "request_id": id})).unwrap();
         line.push(b'\n');
         self.writer.write_all(&line).map_err(|e| e.to_string())?;
+        let deadline = Instant::now() + timeout;
         loop {
-            let mut text = String::new();
-            if self
-                .reader
-                .read_line(&mut text)
-                .map_err(|e| e.to_string())?
-                == 0
-            {
-                return Err("mpv closed".into());
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err("mpv request timed out".into());
             }
-            let Ok(message) = serde_json::from_str::<Value>(&text) else {
-                continue;
-            };
-            if message["request_id"] == id {
-                return if message["error"] == "success" {
-                    Ok(message["data"].clone())
-                } else {
-                    Err(message["error"].as_str().unwrap_or("mpv error").into())
-                };
+            match self.responses.recv_timeout(remaining) {
+                Ok(message) if message["request_id"] == id => {
+                    return if message["error"] == "success" {
+                        Ok(message["data"].clone())
+                    } else {
+                        Err(message["error"].as_str().unwrap_or("mpv error").into())
+                    };
+                }
+                Ok(_) => continue,
+                Err(RecvTimeoutError::Timeout) => return Err("mpv request timed out".into()),
+                Err(RecvTimeoutError::Disconnected) => return Err("mpv closed".into()),
             }
         }
     }
@@ -167,6 +161,97 @@ impl Mpv {
 
     pub fn quit(&mut self) {
         let _ = self.request(json!(["quit"]));
-        let _ = self.child.wait();
+        // A stuck player must not hang shutdown: give it a moment, then force it.
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            if matches!(self.child.try_wait(), Ok(Some(_))) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        self.child.kill();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "requires SYNCHRO_TEST_MPV and SYNCHRO_TEST_VIDEO; opens the real player"]
+    fn native_player_controls_and_cleanup() {
+        let binary = std::env::var_os("SYNCHRO_TEST_MPV").expect("Set SYNCHRO_TEST_MPV");
+        let video = std::env::var_os("SYNCHRO_TEST_VIDEO").expect("Set SYNCHRO_TEST_VIDEO");
+        let mut player = Mpv::open(Path::new(&binary), Path::new(&video), "Synchro IPC test").unwrap();
+        for _ in 0..100 {
+            if player.number("duration").is_some() { break; }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(player.number("duration").unwrap() > 5.0);
+        for volume in [0.0, 25.0, 100.0] {
+            player.set("volume", json!(volume));
+            assert!((player.number("volume").unwrap() - volume).abs() < 0.01);
+        }
+        player.set("speed", json!(0.75));
+        assert_eq!(player.number("speed"), Some(0.75));
+        player.set("pause", json!(true));
+        assert_eq!(player.flag("pause"), Some(true));
+        player.request(json!(["seek", 3.0, "absolute+exact"])).unwrap();
+        for _ in 0..100 {
+            if player.number("time-pos").is_some_and(|time| (time - 3.0).abs() < 0.2) { break; }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!((player.number("time-pos").unwrap() - 3.0).abs() < 0.2);
+        player.set("pause", json!(false));
+        assert_eq!(player.flag("pause"), Some(false));
+        player.quit();
+        assert!(!player.alive());
+    }
+
+    /// A fake player: a socket pair stands in for the mpv pipe, `sleep` for the child process.
+    #[cfg(unix)]
+    fn fake() -> (Mpv, std::os::unix::net::UnixStream) {
+        let (ours, theirs) = std::os::unix::net::UnixStream::pair().unwrap();
+        let child = Process::spawn(Command::new("/bin/sleep").arg("60")).unwrap();
+        let writer = ours.try_clone().unwrap();
+        let responses = spawn_reader(ours);
+        let dir = tempfile::Builder::new().prefix("synchro-mpv-test-").tempdir_in("/tmp").unwrap();
+        (Mpv { child, responses, writer, next_id: 1, _socket_dir: dir }, theirs)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_silent_player_times_out_instead_of_blocking_forever() {
+        let (mut player, _peer) = fake();
+        let error = player.request_with_timeout(json!(["get_property", "time-pos"]), Duration::from_millis(200)).unwrap_err();
+        assert!(error.contains("timed out"), "{error}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn events_are_skipped_and_the_matching_response_is_returned() {
+        let (mut player, mut peer) = fake();
+        let responder = std::thread::spawn(move || {
+            let mut reader = BufReader::new(peer.try_clone().unwrap());
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            let request: Value = serde_json::from_str(&line).unwrap();
+            let id = request["request_id"].clone();
+            // An asynchronous event arrives before the answer and must not be mistaken for it.
+            peer.write_all(b"{\"event\":\"seek\"}\n").unwrap();
+            let answer = json!({"request_id": id, "error": "success", "data": 12.5});
+            peer.write_all(format!("{answer}\n").as_bytes()).unwrap();
+        });
+        assert_eq!(player.request_with_timeout(json!(["get_property", "time-pos"]), Duration::from_secs(2)).unwrap(), json!(12.5));
+        responder.join().unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_closed_player_is_reported_not_hung() {
+        let (mut player, peer) = fake();
+        drop(peer);
+        let error = player.request_with_timeout(json!(["get_property", "time-pos"]), Duration::from_secs(2)).unwrap_err();
+        assert!(error.contains("closed"), "{error}");
     }
 }

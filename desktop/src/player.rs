@@ -2,14 +2,17 @@
 //! A fetcher thread asks the engine for windows ahead of the picture; a scheduler thread drives mpv and the voice.
 use crate::api::{Api, ApiError, Window};
 use crate::config::Settings;
+use crate::engine::{keep_previous_log, log_path};
 use crate::mpv::Mpv;
 use crate::wav::{self, Pcm};
 use base64::Engine as _;
 use rodio::Source;
 use serde_json::json;
+use std::fs::File;
+use std::io::Write;
 use std::num::NonZero;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -17,6 +20,7 @@ use std::time::{Duration, Instant};
 const LOOKAHEAD: f64 = 34.0;
 const INITIAL_BUFFER: f64 = 10.0;
 
+#[derive(Clone)]
 pub struct Cue {
     pub id: u64,
     pub start: f64,
@@ -77,9 +81,34 @@ pub fn enough(ready: f64, time: f64, finished: bool) -> bool {
     }
 }
 
+/// A short plain-text journal for support: state changes only, never transcripts' audio.
+struct Journal {
+    file: Mutex<Option<File>>,
+    started: Instant,
+}
+
+impl Journal {
+    fn new() -> Arc<Journal> {
+        let path = log_path().with_file_name("player.log");
+        keep_previous_log(&path);
+        Self::at(path)
+    }
+
+    fn at(path: PathBuf) -> Arc<Journal> {
+        Arc::new(Journal { file: Mutex::new(File::create(path).ok()), started: Instant::now() })
+    }
+
+    fn log(&self, text: String) {
+        if let Some(file) = self.file.lock().unwrap().as_mut() {
+            let _ = writeln!(file, "{:8.2} {text}", self.started.elapsed().as_secs_f64());
+        }
+    }
+}
+
 pub struct Player {
     shared: Arc<Mutex<Shared>>,
     threads: Vec<JoinHandle<()>>,
+    scheduler_done: mpsc::Receiver<()>,
     video_id: u64,
 }
 
@@ -92,21 +121,25 @@ impl Player {
             status: "Preparing translation…".into(),
             ..Default::default()
         }));
+        let journal = Journal::new();
+        let (done_tx, done_rx) = mpsc::channel();
         let fetcher = {
-            let (shared, settings, file) = (
+            let (shared, settings, journal, file) = (
                 shared.clone(),
                 settings.clone(),
+                journal.clone(),
                 file.to_string_lossy().into_owned(),
             );
-            std::thread::spawn(move || fetch(api, file, settings, shared))
+            std::thread::spawn(move || fetch(api, file, settings, shared, journal))
         };
         let scheduler = {
-            let shared = shared.clone();
-            std::thread::spawn(move || schedule(mpv, file, settings, shared))
+            let (shared, journal) = (shared.clone(), journal.clone());
+            std::thread::spawn(move || schedule(mpv, file, settings, shared, journal, done_tx))
         };
         Player {
             shared,
             threads: vec![fetcher, scheduler],
+            scheduler_done: done_rx,
             video_id,
         }
     }
@@ -132,6 +165,18 @@ impl Player {
     pub fn stop(&self) {
         self.shared.lock().unwrap().stop = true;
     }
+
+    /// Wait (bounded) for the scheduler to close mpv, so a new video does not open a second player.
+    pub fn wait_stopped(&self, timeout: Duration) {
+        let _ = self.scheduler_done.recv_timeout(timeout);
+    }
+}
+
+impl Drop for Player {
+    fn drop(&mut self) {
+        // Even on an abrupt exit the worker threads must wind down and release mpv.
+        self.shared.lock().unwrap().stop = true;
+    }
 }
 
 fn restart(shared: &mut Shared, position: Option<f64>) {
@@ -144,17 +189,28 @@ fn restart(shared: &mut Shared, position: Option<f64>) {
     shared.error = None;
 }
 
-fn decode(window: Window) -> Vec<Cue> {
+fn decode(window: Window, journal: &Journal) -> Vec<Cue> {
     window
         .segments
         .into_iter()
         .filter_map(|segment| {
-            let bytes = base64::engine::general_purpose::STANDARD
-                .decode(segment.wav)
-                .ok()?;
-            let audio = Arc::new(wav::decode(&bytes).ok()?);
+            let id = segment.id;
+            let bytes = match base64::engine::general_purpose::STANDARD.decode(&segment.wav) {
+                Ok(bytes) => bytes,
+                Err(error) => {
+                    journal.log(format!("segment {id} skipped: invalid base64 ({error})"));
+                    return None;
+                }
+            };
+            let audio = match wav::decode(&bytes) {
+                Ok(pcm) => Arc::new(pcm),
+                Err(error) => {
+                    journal.log(format!("segment {id} skipped: invalid audio ({error})"));
+                    return None;
+                }
+            };
             Some(Cue {
-                id: segment.id,
+                id,
                 start: segment.start,
                 duration: segment.duration,
                 source_duration: segment.source_duration,
@@ -165,7 +221,7 @@ fn decode(window: Window) -> Vec<Cue> {
         .collect()
 }
 
-fn fetch(api: Api, file: String, settings: Arc<Mutex<Settings>>, shared: Arc<Mutex<Shared>>) {
+fn fetch(api: Api, file: String, settings: Arc<Mutex<Settings>>, shared: Arc<Mutex<Shared>>, journal: Arc<Journal>) {
     let (mut session, mut generation, mut ready, mut finished, mut failed) =
         (None::<String>, 0u64, 0.0, false, false);
     let mut heartbeat = Instant::now();
@@ -212,7 +268,7 @@ fn fetch(api: Api, file: String, settings: Arc<Mutex<Settings>>, shared: Arc<Mut
             match retried(&shared, generation, || api.next(id, ready)) {
                 Ok(window) => {
                     let (until, last) = (window.ready_until, window.finished);
-                    let cues = decode(window);
+                    let cues = decode(window, &journal);
                     let mut s = shared.lock().unwrap();
                     if s.generation == generation {
                         (ready, finished, heartbeat) = (until, last, Instant::now());
@@ -278,6 +334,8 @@ fn schedule(
     file: PathBuf,
     settings: Arc<Mutex<Settings>>,
     shared: Arc<Mutex<Shared>>,
+    journal: Arc<Journal>,
+    done_tx: mpsc::Sender<()>,
 ) {
     let title = format!(
         "Synchro — {}",
@@ -290,25 +348,15 @@ fn schedule(
         Err(error) => {
             let mut s = shared.lock().unwrap();
             (s.error, s.stop) = (Some(error), true);
+            let _ = done_tx.send(());
             return;
         }
     };
-    // A short plain-text journal for support: state changes only, never transcripts' audio.
-    let started = Instant::now();
-    let journal = std::sync::Mutex::new(
-        std::fs::File::create(crate::engine::log_path().with_file_name("player.log")).ok(),
-    );
-    let log = |text: String| {
-        use std::io::Write;
-        if let Some(file) = journal.lock().unwrap().as_mut() {
-            let _ = writeln!(file, "{:8.2} {text}", started.elapsed().as_secs_f64());
-        }
-    };
-    log(format!("open {}", file.display()));
+    journal.log(format!("open {}", file.display()));
     // Without an audio device the picture still plays; there is just no voice.
     let device = rodio::DeviceSinkBuilder::open_default_sink().ok();
     if device.is_none() {
-        log("no audio output device; voice disabled".into());
+        journal.log("no audio output device; voice disabled".into());
     }
     let mut voice: Option<Voice> = None;
     let (mut wanted, mut held, mut preparing, mut speed) = (true, true, true, 1.0);
@@ -328,77 +376,126 @@ fn schedule(
         };
         let paused = mpv.flag("pause").unwrap_or(true);
         let seeking = mpv.flag("seeking").unwrap_or(false);
+        let eof = mpv.flag("eof-reached").unwrap_or(false);
         let now = Instant::now();
         let config = settings.lock().unwrap().clone();
-        let mut s = shared.lock().unwrap();
-        // A user seek (or a restart from settings) translates again from the new position.
-        let jumped = last.is_some_and(|(at, when)| {
-            let expected = if paused {
-                at
-            } else {
-                at + when.elapsed().as_secs_f64() * speed
-            };
-            seeking || (time - expected).abs() > 1.5
-        });
-        if jumped {
-            log(format!("seek to {time:.1}"));
-            restart(&mut s, Some(time));
-        }
-        if s.generation != generation {
-            generation = s.generation;
-            preparing = true;
-            stop_voice(&mut voice);
-        }
-        last = Some((time, now));
-        s.position = time;
-        // mpv's own pause button: playback the user stopped stays stopped; a press while we hold resumes intent.
-        if paused && !held && wanted {
-            let end = mpv.flag("eof-reached").unwrap_or(false);
-            log(if end {
-                format!("end of video at {time:.1}")
-            } else {
-                format!("paused by the viewer at {time:.1}")
+        // Decide while holding the lock, but record player effects to apply after releasing it,
+        // so a slow or stuck mpv cannot freeze the UI thread or the fetcher.
+        let mut pause_set = None;
+        let mut speed_set = None;
+        let mut stop_voice_now = false;
+        let mut caption_show = None;
+        let mut notice_show = None;
+        let (running, active_cue, rate) = {
+            let mut s = shared.lock().unwrap();
+            // A user seek (or a restart from settings) translates again from the new position.
+            let jumped = last.is_some_and(|(at, when)| {
+                let expected = if paused {
+                    at
+                } else {
+                    at + when.elapsed().as_secs_f64() * speed
+                };
+                seeking || (time - expected).abs() > 1.5
             });
-            wanted = false;
-        }
-        if !paused && held {
-            held = false;
-            wanted = true;
-        }
-        let (ready, finished, duration) = (s.ready, s.finished, s.duration.max(time + 0.2));
-        if preparing && prepared(ready, time, duration, finished) {
-            preparing = false;
-        }
-        if wanted && !paused && (preparing || starved(ready, time, finished)) {
-            log(format!(
-                "waiting for translation at {time:.1} (ready to {ready:.1})"
-            ));
-            mpv.set("pause", json!(true));
-            held = true;
+            if jumped {
+                journal.log(format!("seek to {time:.1}"));
+                restart(&mut s, Some(time));
+            }
+            if s.generation != generation {
+                generation = s.generation;
+                preparing = true;
+                stop_voice_now = true;
+            }
+            last = Some((time, now));
+            s.position = time;
+            // mpv's own pause button: playback the user stopped stays stopped; a press while we hold resumes intent.
+            if paused && !held && wanted {
+                journal.log(if eof {
+                    format!("end of video at {time:.1}")
+                } else {
+                    format!("paused by the viewer at {time:.1}")
+                });
+                wanted = false;
+            }
+            if !paused && held {
+                held = false;
+                wanted = true;
+            }
+            let (ready, finished, duration) = (s.ready, s.finished, s.duration.max(time + 0.2));
+            if preparing && prepared(ready, time, duration, finished) {
+                preparing = false;
+            }
+            if wanted && !paused && (preparing || starved(ready, time, finished)) {
+                journal.log(format!(
+                    "waiting for translation at {time:.1} (ready to {ready:.1})"
+                ));
+                pause_set = Some(true);
+                held = true;
+                stop_voice_now = true;
+            } else if wanted
+                && paused
+                && held
+                && !preparing
+                && enough(ready, time, finished)
+                && s.error.is_none()
+            {
+                journal.log(format!("playing from {time:.1} (ready to {ready:.1})"));
+                pause_set = Some(false);
+                held = false;
+            }
+            let cue = cue_at(&s.cues, time);
+            let rate = video_rate(cue);
+            if (rate - speed).abs() > 1e-4 {
+                journal.log(format!("video speed {rate:.2} at {time:.1}"));
+                speed_set = Some(rate);
+                speed = rate;
+                stop_voice_now = true;
+            }
+            let running = wanted && !paused && !seeking && !preparing;
+            let active_cue = cue.cloned();
+            if config.captions && running
+                && let Some(cue) = cue.filter(|cue| caption != Some(cue.id))
+            {
+                let remaining =
+                    ((cue.start + cue.source_duration - time) / rate * 1000.0).max(300.0) as u64;
+                caption_show = Some((cue.text.clone(), remaining));
+                caption = Some(cue.id);
+            }
+            s.status = if let Some(error) = &s.error {
+                format!("Error: {error}")
+            } else if preparing || held && wanted {
+                "Translating ahead…".into()
+            } else {
+                format!(
+                    "Translated to {}:{:02}",
+                    (ready / 60.0) as u64,
+                    (ready % 60.0) as u64
+                )
+            };
+            if (preparing || held && wanted || s.error.is_some())
+                && notice.elapsed() > Duration::from_millis(900)
+            {
+                notice_show = Some((format!("Synchro: {}", config.interface_language.message(&s.status)), 1000));
+                notice = now;
+            } else {
+                s.cues
+                    .retain(|cue| cue.start + cue.source_duration >= time - 30.0);
+            }
+            (running, active_cue, rate)
+        };
+        // Apply player effects without holding the shared lock.
+        if stop_voice_now {
             stop_voice(&mut voice);
-        } else if wanted
-            && paused
-            && held
-            && !preparing
-            && enough(ready, time, finished)
-            && s.error.is_none()
-        {
-            log(format!("playing from {time:.1} (ready to {ready:.1})"));
-            mpv.set("pause", json!(false));
-            held = false;
         }
-        let cue = cue_at(&s.cues, time);
-        let rate = video_rate(cue);
-        if (rate - speed).abs() > 1e-4 {
-            log(format!("video speed {rate:.2} at {time:.1}"));
-            stop_voice(&mut voice);
-            mpv.set("speed", json!(rate));
-            speed = rate;
+        if let Some(p) = pause_set {
+            mpv.set("pause", json!(p));
         }
-        let running = wanted && !paused && !seeking && !preparing;
+        if let Some(sp) = speed_set {
+            mpv.set("speed", json!(sp));
+        }
         if !running {
             stop_voice(&mut voice);
-        } else if let (Some(cue), Some(device)) = (cue, &device) {
+        } else if let (Some(cue), Some(device)) = (&active_cue, &device) {
             let due = (time - cue.start) / rate;
             let in_sync = voice.as_ref().is_some_and(|v| {
                 v.id == cue.id && (v.offset + v.started.elapsed().as_secs_f64() - due).abs() < 0.25
@@ -420,7 +517,7 @@ fn schedule(
                         )
                         .skip_duration(Duration::from_secs_f64(due.max(0.0))),
                     );
-                    log(format!(
+                    journal.log(format!(
                         "voice {} at {time:.2} from {:.2} s of {:.2} s",
                         cue.id,
                         due.max(0.0),
@@ -462,47 +559,24 @@ fn schedule(
             mpv.set("volume", json!(mpv_volume(mixed)));
             volume = mixed;
         }
-        if config.captions && running {
-            if let Some(cue) = cue.filter(|cue| caption != Some(cue.id)) {
-                let remaining =
-                    ((cue.start + cue.source_duration - time) / rate * 1000.0).max(300.0) as u64;
-                mpv.show(&cue.text, remaining);
-                caption = Some(cue.id);
-            }
+        if let Some((text, ms)) = caption_show {
+            mpv.show(&text, ms);
         }
-        s.status = if let Some(error) = &s.error {
-            format!("Error: {error}")
-        } else if preparing || held && wanted {
-            "Translating ahead…".into()
-        } else {
-            format!(
-                "Translated to {}:{:02}",
-                (ready / 60.0) as u64,
-                (ready % 60.0) as u64
-            )
-        };
-        if (preparing || held && wanted || s.error.is_some())
-            && notice.elapsed() > Duration::from_millis(900)
-        {
-            let text = format!("Synchro: {}", config.interface_language.message(&s.status));
-            notice = now;
-            drop(s);
-            mpv.show(&text, 1000);
-        } else {
-            s.cues
-                .retain(|cue| cue.start + cue.source_duration >= time - 30.0);
-            drop(s);
+        if let Some((text, ms)) = notice_show {
+            mpv.show(&text, ms);
         }
         std::thread::sleep(Duration::from_millis(20));
     }
     stop_voice(&mut voice);
     mpv.quit();
     shared.lock().unwrap().stop = true;
+    let _ = done_tx.send(());
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::{Segment, Window};
 
     #[test]
     fn original_volume_matches_linear_voice_gain_and_ducking_is_audible() {
@@ -547,5 +621,62 @@ mod tests {
         assert!(prepared(4.0, 0.0, 4.0, true));
         assert!(starved(31.0, 30.0, false) && !starved(31.0, 30.0, true));
         assert!(!enough(31.0, 30.0, false) && enough(31.3, 30.0, false));
+    }
+
+    #[test]
+    fn dropping_a_player_signals_the_workers_to_stop() {
+        let shared = Arc::new(Mutex::new(Shared::default()));
+        let (_tx, rx) = mpsc::channel();
+        let player = Player { shared: shared.clone(), threads: vec![], scheduler_done: rx, video_id: 1 };
+        assert!(!shared.lock().unwrap().stop);
+        drop(player);
+        assert!(shared.lock().unwrap().stop);
+    }
+
+    #[test]
+    fn wait_stopped_returns_once_the_scheduler_finishes() {
+        let shared = Arc::new(Mutex::new(Shared::default()));
+        let (tx, rx) = mpsc::channel();
+        let player = Player { shared, threads: vec![], scheduler_done: rx, video_id: 1 };
+        tx.send(()).unwrap();
+        player.wait_stopped(Duration::from_secs(1));
+    }
+
+    fn tiny_wav() -> Vec<u8> {
+        let mut out = b"RIFF".to_vec();
+        out.extend((36 + 4u32).to_le_bytes());
+        out.extend(b"WAVEfmt ");
+        out.extend(16u32.to_le_bytes());
+        out.extend(1u16.to_le_bytes());
+        out.extend(1u16.to_le_bytes());
+        out.extend(48000u32.to_le_bytes());
+        out.extend((48000 * 2u32).to_le_bytes());
+        out.extend(2u16.to_le_bytes());
+        out.extend(16u16.to_le_bytes());
+        out.extend(b"data");
+        out.extend(4u32.to_le_bytes());
+        out.extend([0u8, 0, 0, 0]);
+        out
+    }
+
+    #[test]
+    fn decode_skips_and_logs_broken_segments() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("player.log");
+        let journal = Journal::at(log.clone());
+        let good = base64::engine::general_purpose::STANDARD.encode(tiny_wav());
+        let window = Window {
+            segments: vec![
+                Segment { id: 1, start: 0.0, duration: 1.0, source_duration: 1.0, text: "ok".into(), wav: good },
+                Segment { id: 2, start: 1.0, duration: 1.0, source_duration: 1.0, text: "bad".into(), wav: "!!!not base64!!!".into() },
+            ],
+            ready_until: 2.0,
+            finished: false,
+        };
+        let cues = decode(window, &journal);
+        assert_eq!(cues.len(), 1);
+        assert_eq!(cues[0].id, 1);
+        let logged = std::fs::read_to_string(&log).unwrap();
+        assert!(logged.contains("segment 2 skipped"), "{logged}");
     }
 }

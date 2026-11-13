@@ -62,7 +62,7 @@ struct App {
 
 impl App {
     fn new(file: Option<PathBuf>) -> App {
-        let settings = Settings::load();
+        let (settings, recovery_notice) = Settings::load_with_recovery();
         let translation_page = file.is_some() && settings.connection_error().is_some();
         let engine = Arc::new(Mutex::new(EngineState::Starting));
         let engine_process: Arc<Mutex<Option<engine::Engine>>> = Default::default();
@@ -125,7 +125,7 @@ impl App {
             current_file: None,
             playback_status: String::new(),
             playback_error: None,
-            notice: None,
+            notice: recovery_notice,
             save_error: None,
             providers: Default::default(),
             playback_id: None,
@@ -157,6 +157,7 @@ impl App {
         self.save_settings();
         if let Some(player) = self.player.take() {
             player.stop();
+            player.wait_stopped(Duration::from_secs(8));
         }
         self.current_file = Some(file.clone());
         self.playback_status = "Preparing translation…".into();

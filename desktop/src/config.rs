@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -106,18 +106,48 @@ impl Settings {
     }
 
     pub fn load() -> Settings {
-        path()
-            .and_then(|p| std::fs::read(p).ok())
-            .and_then(|data| serde_json::from_slice(&data).ok())
-            .unwrap_or_default()
+        Self::load_with_recovery().0
+    }
+
+    /// Loads settings; a damaged file is kept as a `.corrupt` backup and reported instead of silently lost.
+    pub fn load_with_recovery() -> (Settings, Option<String>) {
+        match path() {
+            Some(p) => Self::load_from(&p),
+            None => (Settings::default(), None),
+        }
+    }
+
+    fn load_from(p: &Path) -> (Settings, Option<String>) {
+        let Ok(data) = std::fs::read(p) else { return (Settings::default(), None); };
+        match serde_json::from_slice(&data) {
+            Ok(settings) => (settings, None),
+            Err(_) => {
+                let backup = p.with_extension("json.corrupt");
+                let _ = std::fs::rename(p, &backup);
+                (Settings::default(), Some(format!(
+                    "Settings were damaged and reset to defaults. A backup was kept at {}.",
+                    backup.display()
+                )))
+            }
+        }
     }
 
     pub fn save(&self) -> Result<(), String> {
         // shortcut: the key is stored as plain JSON in the user's profile, like the extension's storage; use DPAPI if shared PCs matter.
         let p = path().ok_or("The settings folder is unavailable")?;
+        self.save_to(&p)
+    }
+
+    fn save_to(&self, p: &Path) -> Result<(), String> {
         std::fs::create_dir_all(p.parent().unwrap()).map_err(|e| e.to_string())?;
         let data = serde_json::to_vec_pretty(self).map_err(|e| e.to_string())?;
-        std::fs::write(p, data).map_err(|e| e.to_string())
+        // Write-then-rename so a crash mid-write cannot leave a truncated settings file.
+        let tmp = p.with_extension("json.tmp");
+        std::fs::write(&tmp, &data).map_err(|e| e.to_string())?;
+        std::fs::rename(&tmp, p).map_err(|e| {
+            let _ = std::fs::remove_file(&tmp);
+            e.to_string()
+        })
     }
 
     pub fn connection_error(&self) -> Option<&'static str> {
@@ -283,5 +313,38 @@ mod tests {
         }
         settings.base_url = " http://127.0.0.1:1234/v1 ".into();
         assert_eq!(settings.connection_error(), None);
+    }
+
+    #[test]
+    fn save_is_atomic_and_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("settings.json");
+        let settings = Settings { api_key: "key".into(), original_volume: 0.7, ..Default::default() };
+        settings.save_to(&p).unwrap();
+        assert!(!p.with_extension("json.tmp").exists());
+        let (restored, warning) = Settings::load_from(&p);
+        assert!(warning.is_none());
+        assert_eq!(restored.api_key, "key");
+        assert_eq!(restored.original_volume, 0.7);
+    }
+
+    #[test]
+    fn a_corrupt_file_is_backed_up_and_reported_not_silently_lost() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("settings.json");
+        std::fs::write(&p, b"{ this is not json").unwrap();
+        let (settings, warning) = Settings::load_from(&p);
+        assert!(settings == Settings::default());
+        assert!(warning.is_some());
+        assert!(!p.exists());
+        assert_eq!(std::fs::read(p.with_extension("json.corrupt")).unwrap(), b"{ this is not json");
+    }
+
+    #[test]
+    fn a_missing_file_loads_defaults_without_warning() {
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, warning) = Settings::load_from(&dir.path().join("absent.json"));
+        assert!(settings == Settings::default());
+        assert!(warning.is_none());
     }
 }
