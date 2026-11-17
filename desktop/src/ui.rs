@@ -13,7 +13,6 @@ const MUTED: Color32 = Color32::from_rgb(157, 169, 172);
 const ACCENT: Color32 = Color32::from_rgb(137, 205, 177);
 const INK: Color32 = Color32::from_rgb(23, 43, 35);
 const ERROR: Color32 = Color32::from_rgb(242, 160, 151);
-const OPEN_SHORTCUT: &str = if cfg!(target_os = "macos") { "⌘ O" } else { "Ctrl + O" };
 
 pub fn icon() -> egui::IconData {
     let mut rgba = BG.to_array().repeat(64 * 64);
@@ -134,7 +133,7 @@ fn select(ui: &mut egui::Ui, l: Language, id: &str, title: &str, value: &mut Str
         });
 }
 
-fn volume(ui: &mut egui::Ui, title: &str, value: &mut f32) {
+pub(crate) fn volume(ui: &mut egui::Ui, title: &str, value: &mut f32) {
     let height = ui.spacing().interact_size.y;
     ui.spacing_mut().interact_size.y = 20.0;
     ui.horizontal(|ui| {
@@ -154,17 +153,13 @@ fn volume(ui: &mut egui::Ui, title: &str, value: &mut f32) {
     ui.spacing_mut().interact_size.y = height;
 }
 
-fn badge(ui: &mut egui::Ui, text: &str, color: Color32) {
-    ui.horizontal(|ui| {
-        let (rect, _) = ui.allocate_exact_size(Vec2::splat(8.0), egui::Sense::hover());
-        ui.painter().circle_filled(rect.center(), 3.0, color);
-        ui.label(RichText::new(text).color(color).size(12.0));
-    });
-}
-
 impl App {
     pub(super) fn draw(&mut self, ui: &mut egui::Ui) {
         let l = self.edited.interface_language;
+        if !self.translation_page {
+            self.theater_ui(ui);
+            return;
+        }
         egui::Panel::top("header")
             .frame(
                 egui::Frame::new()
@@ -193,12 +188,8 @@ impl App {
                     {
                         self.translation_page = false;
                     }
-                    if ui
-                        .add(egui::Button::new(l.text("Translation")).selected(self.translation_page))
-                        .clicked()
-                    {
-                        self.translation_page = true;
-                    }
+                    ui.selectable_value(&mut self.theater.voices_tab, true, l.text("Voices"));
+                    ui.selectable_value(&mut self.theater.voices_tab, false, l.text("Translation"));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let (text, color) = match &*self.engine.lock().unwrap() {
                             EngineState::Starting => (l.text("Engine starting"), MUTED),
@@ -292,191 +283,12 @@ impl App {
                             });
                             ui.add_space(12.0);
                         }
-                        if self.translation_page {
-                            self.translation_ui(ui);
-                        } else {
-                            self.watch_ui(ui);
-                        }
+                        if self.theater.voices_tab { self.playback_ui(ui); }
+                        else { self.translation_ui(ui); }
+                        self.spending_ui(ui);
+
                     });
             });
-    }
-
-    fn watch_ui(&mut self, ui: &mut egui::Ui) {
-        let l = self.edited.interface_language;
-        ui.heading(l.text("Watch with Russian voiceover"));
-        muted(ui, l.text("Your videos, with synchronized Russian voiceover."));
-        ui.add_space(18.0);
-        if ui.available_width() >= 850.0 {
-            let left = ui.available_width() - 320.0;
-            ui.horizontal_top(|ui| {
-                ui.spacing_mut().item_spacing.x = 20.0;
-                ui.allocate_ui_with_layout(
-                    Vec2::new(left, 0.0),
-                    egui::Layout::top_down(egui::Align::Min),
-                    |ui| {
-                        self.video_ui(ui);
-                    },
-                );
-                ui.allocate_ui_with_layout(
-                    Vec2::new(300.0, 0.0),
-                    egui::Layout::top_down(egui::Align::Min),
-                    |ui| {
-                        self.playback_ui(ui);
-                    },
-                );
-            });
-        } else {
-            self.video_ui(ui);
-            ui.add_space(18.0);
-            self.playback_ui(ui);
-        }
-    }
-
-    fn video_ui(&mut self, ui: &mut egui::Ui) {
-        let l = self.edited.interface_language;
-        let hovered = ui.ctx().input(|i| !i.raw.hovered_files.is_empty());
-        let compact = ui.available_width() < 650.0;
-        egui::Frame::new()
-            .fill(SURFACE)
-            .stroke(Stroke::new(1.0, if hovered { ACCENT } else { BORDER }))
-            .corner_radius(14)
-            .inner_margin(24)
-            .show(ui, |ui| {
-                ui.set_width((ui.available_width()).max(100.0));
-                ui.vertical_centered(|ui| {
-                    ui.add_space(if compact { 4.0 } else { 22.0 });
-                    let (rect, _) = ui.allocate_exact_size(
-                        Vec2::new(68.0, if compact { 44.0 } else { 56.0 }),
-                        egui::Sense::hover(),
-                    );
-                    let painter = ui.painter();
-                    painter.rect_stroke(
-                        rect.shrink(2.0),
-                        9,
-                        Stroke::new(1.5, MUTED),
-                        egui::StrokeKind::Inside,
-                    );
-                    let c = rect.center();
-                    painter.add(egui::Shape::convex_polygon(
-                        vec![
-                            c + egui::vec2(-5.0, -10.0),
-                            c + egui::vec2(10.0, 0.0),
-                            c + egui::vec2(-5.0, 10.0),
-                        ],
-                        ACCENT,
-                        Stroke::NONE,
-                    ));
-                    ui.add_space(14.0);
-                    let file = self.pending.as_ref().or(self.current_file.as_ref());
-                    let title = file
-                        .and_then(|p| p.file_name())
-                        .map(|s| s.to_string_lossy().into_owned());
-                    ui.add(
-                        egui::Label::new(
-                            RichText::new(title.as_deref().unwrap_or(l.text("Open a video to begin")))
-                                .size(20.0)
-                                .strong(),
-                        )
-                        .wrap(),
-                    );
-                    if let Some(file) = file {
-                        ui.add(
-                            egui::Label::new(
-                                RichText::new(if self.pending.is_some() {
-                                    l.text("Video selected · waiting to start")
-                                } else if self.player.is_some() {
-                                    l.text("Playing in the video window")
-                                } else {
-                                    l.text("Video closed")
-                                })
-                                .color(MUTED),
-                            )
-                            .wrap(),
-                        )
-                        .on_hover_text(file.display().to_string());
-                    } else {
-                        muted(
-                            ui,
-                            if hovered {
-                                l.text("Drop your video here")
-                            } else {
-                                l.text("Drop a video here, or choose a file to get started.")
-                            },
-                        );
-                    }
-                    ui.add_space(14.0);
-                    if primary(
-                        ui,
-                        if self.current_file.is_some() {
-                            l.text("Open another video")
-                        } else {
-                            l.text("Open video")
-                        },
-                    )
-                    .on_hover_text(format!("{} · {OPEN_SHORTCUT}", l.text("Choose a local video file")))
-                    .clicked()
-                    {
-                        self.pick_video();
-                    }
-                    ui.label(RichText::new(OPEN_SHORTCUT).small().color(MUTED));
-                    if !compact {
-                        ui.add_space(12.0);
-                        ui.label(
-                            RichText::new(l.text("MP4 · MKV · AVI · MOV · WebM + more"))
-                                .small()
-                                .color(MUTED),
-                        );
-                    }
-                    ui.add_space(8.0);
-                });
-            });
-        ui.add_space(14.0);
-        if self.edited.connection_error().is_some() {
-            ui.label(RichText::new(l.text("One quick setup before you watch")).strong());
-            muted(ui, l.text("Connect a translation provider or a local model."));
-            if ui.button(l.text("Set up translation")).clicked() {
-                self.translation_page = true;
-            }
-        } else if self.current_file.is_some() {
-            ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new(l.message(&self.playback_status)).color(
-                    if self.playback_error.is_some() {
-                        ERROR
-                    } else {
-                        ACCENT
-                    },
-                ));
-                if let Some(player) = &self.player
-                    && ui.button(l.text("Stop video")).clicked()
-                {
-                    player.stop();
-                }
-            });
-            if let Some(error) = &self.playback_error {
-                ui.colored_label(ERROR, l.message(error.as_ref()));
-            }
-        } else {
-            badge(ui, l.text("Translation configured"), ACCENT);
-        }
-        ui.add_space(18.0);
-        self.spending_ui(ui);
-        egui::CollapsingHeader::new(l.text("Playback shortcuts")).show(ui, |ui| {
-            for (key, action) in [
-                (l.text("Space"), l.text("Pause / play")),
-                (l.text("Left / Right"), l.text("Seek 5 seconds")),
-                (l.text("F / double-click"), l.text("Full screen")),
-                ("Q", l.text("Close video")),
-            ] {
-                ui.horizontal(|ui| {
-                    ui.add_sized(
-                        [145.0, 20.0],
-                        egui::Label::new(RichText::new(l.text(key)).color(TEXT)),
-                    );
-                    muted(ui, l.text(action));
-                });
-            }
-            muted(ui, l.text("Use these shortcuts in the video window."));
-        });
     }
 
     fn playback_ui(&mut self, ui: &mut egui::Ui) {

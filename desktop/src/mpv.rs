@@ -1,6 +1,8 @@
 //! mpv plays the video; Synchro controls it over a named pipe or private Unix socket.
 use serde_json::{Value, json};
-use std::io::{BufRead, BufReader, Write};
+use std::io::Write;
+#[cfg(unix)]
+use std::io::{BufRead, BufReader};
 use crate::process::Process;
 #[cfg(windows)]
 type Pipe = std::fs::File;
@@ -8,6 +10,7 @@ type Pipe = std::fs::File;
 type Pipe = std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::process::{Command, Stdio};
+#[cfg(unix)]
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::time::{Duration, Instant};
 
@@ -16,7 +19,10 @@ const IPC_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub struct Mpv {
     child: Process,
+    #[cfg(unix)]
     responses: Receiver<Value>,
+    #[cfg(windows)]
+    incoming: Vec<u8>,
     writer: Pipe,
     #[cfg(unix)]
     _socket_dir: tempfile::TempDir,
@@ -24,6 +30,7 @@ pub struct Mpv {
 }
 
 /// Reads mpv's line-delimited JSON on its own thread so a stalled pipe cannot block the scheduler.
+#[cfg(unix)]
 fn spawn_reader(pipe: Pipe) -> Receiver<Value> {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
@@ -48,13 +55,12 @@ fn spawn_reader(pipe: Pipe) -> Receiver<Value> {
 impl Mpv {
     pub fn open(mpv: &Path, file: &Path, title: &str) -> Result<Mpv, String> {
         #[cfg(windows)]
+        static PIPE_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        #[cfg(windows)]
         let pipe = format!(
             r"\\.\pipe\synchro-mpv-{}-{}",
             std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis()
+            PIPE_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         );
         #[cfg(unix)]
         let socket_dir = tempfile::Builder::new().prefix("synchro-mpv-").tempdir_in("/tmp").map_err(|e| e.to_string())?;
@@ -66,7 +72,9 @@ impl Mpv {
                 "--no-config",
                 "--pause",
                 "--keep-open=yes",
-                "--force-window=immediate",
+                "--force-window=no",
+                "--vid=no",
+                "--audio-display=no",
                 "--hr-seek=yes",
                 "--idle=no",
                 "--osd-duration=1500",
@@ -89,7 +97,10 @@ impl Mpv {
                 let writer = pipe.try_clone().map_err(|e| e.to_string())?;
                 return Ok(Mpv {
                     child,
+                    #[cfg(unix)]
                     responses: spawn_reader(pipe),
+                    #[cfg(windows)]
+                    incoming: Vec::new(),
                     writer,
                     next_id: 1,
                     #[cfg(unix)]
@@ -118,6 +129,7 @@ impl Mpv {
         let id = self.next_id;
         self.next_id += 1;
         // Drop stale events and answers to a timed-out request so they cannot leak into this one.
+        #[cfg(unix)]
         while self.responses.try_recv().is_ok() {}
         let mut line = serde_json::to_vec(&json!({"command": command, "request_id": id})).unwrap();
         line.push(b'\n');
@@ -128,18 +140,45 @@ impl Mpv {
             if remaining.is_zero() {
                 return Err("mpv request timed out".into());
             }
-            match self.responses.recv_timeout(remaining) {
-                Ok(message) if message["request_id"] == id => {
-                    return if message["error"] == "success" {
-                        Ok(message["data"].clone())
-                    } else {
-                        Err(message["error"].as_str().unwrap_or("mpv error").into())
-                    };
-                }
-                Ok(_) => continue,
-                Err(RecvTimeoutError::Timeout) => return Err("mpv request timed out".into()),
-                Err(RecvTimeoutError::Disconnected) => return Err("mpv closed".into()),
+            #[cfg(unix)]
+            let message = self.responses.recv_timeout(remaining).map_err(|err| match err {
+                RecvTimeoutError::Timeout => "mpv request timed out",
+                RecvTimeoutError::Disconnected => "mpv closed",
+            })?;
+            #[cfg(windows)]
+            let message = self.read_message(deadline)?;
+            if message["request_id"] == id {
+                return if message["error"] == "success" { Ok(message["data"].clone()) }
+                    else { Err(message["error"].as_str().unwrap_or("mpv error").into()) };
             }
+        }
+    }
+
+    // A blocking read on a cloned synchronous Windows pipe also locks out the writer.
+    // Poll the single pipe after writing, keeping partial lines between requests.
+    #[cfg(windows)]
+    fn read_message(&mut self, deadline: Instant) -> Result<Value, String> {
+        use std::io::Read;
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::System::Pipes::PeekNamedPipe;
+        loop {
+            if let Some(end) = self.incoming.iter().position(|byte| *byte == b'\n') {
+                let line: Vec<_> = self.incoming.drain(..=end).collect();
+                if let Ok(value) = serde_json::from_slice(&line) { return Ok(value); }
+            }
+            if Instant::now() >= deadline { return Err("mpv request timed out".into()); }
+            let mut available = 0;
+            let ok = unsafe { PeekNamedPipe(self.writer.as_raw_handle(), std::ptr::null_mut(), 0,
+                std::ptr::null_mut(), &mut available, std::ptr::null_mut()) };
+            if ok == 0 { return Err("mpv closed".into()); }
+            if available == 0 {
+                std::thread::sleep(Duration::from_millis(1));
+                continue;
+            }
+            let mut bytes = [0; 4096];
+            let limit = (available as usize).min(bytes.len());
+            let count = self.writer.read(&mut bytes[..limit]).map_err(|e| e.to_string())?;
+            self.incoming.extend_from_slice(&bytes[..count]);
         }
     }
 
@@ -153,10 +192,6 @@ impl Mpv {
 
     pub fn set(&mut self, name: &str, value: Value) {
         let _ = self.request(json!(["set_property", name, value]));
-    }
-
-    pub fn show(&mut self, text: &str, milliseconds: u64) {
-        let _ = self.request(json!(["show-text", text, milliseconds]));
     }
 
     pub fn quit(&mut self) {

@@ -3,7 +3,7 @@
 For the native Apple Silicon app, installation and builds, see the [macOS guide](MACOS.md).
 
 The Windows and macOS apps include English and Russian interfaces. Choose **Language → Русский** in the
-footer to switch immediately; the choice is saved automatically. This setting is separate from **Video language**
+settings footer to switch immediately; the choice is saved automatically. This setting is separate from **Video language**
 and does not restart playback or translation. Existing settings keep English until you change it. The Windows
 installer also offers English and Russian.
 
@@ -70,11 +70,11 @@ models, FFmpeg and mpv. Nothing is installed system-wide.
 
 ## First start
 
-1. Start **Synchro**. The header shows *Engine starting*, then *Engine ready*.
+1. Start **Synchro** and open **Voices & translation**. The settings header shows the engine status.
 2. Open the **Translation** tab, choose a **translation provider** and paste its **API key** (see below).
    For a local model, choose **OpenAI-compatible address** and enter the server address. Settings save automatically;
    a save failure is shown in the footer with a **Retry** action.
-3. In **Watch**, pick a **Russian voice** and the **video language** in the voiceover panel.
+3. In **Voices**, pick a **Russian voice** and the **video language** in the voiceover panel.
 4. Optionally press **Check connection** on the **Translation** tab. The first check loads the speech models
    (about 20–30 s on a typical laptop); afterwards models are loaded automatically at every start, so videos open in seconds.
 
@@ -149,7 +149,7 @@ million tokens. A manual model ID remains available if the catalog cannot be rea
   retrieve account credits and total account spending. This key stays in memory for the app run and is sent only
   to the balance endpoint; it is never used for translation or saved to disk.
 - **This provider · app run:** confirmed request costs since the app started, including connection checks, retries,
-  translation, grammar correction and phrase alignment. The Watch screen also shows the cost of the current video,
+  translation, grammar correction and phrase alignment. The settings screen also shows the cost of the current video,
   including seeks and changes of settings. These counters reset when the app closes.
 
 Missing provider prices are reported as unpriced requests, rather than assumed to be free. A partial total may be
@@ -161,23 +161,26 @@ video totals count Synchro requests only. OpenAI/custom endpoints have no balanc
 1. Click **Open video** in **Watch**, press **Ctrl+O**, drag a video onto Synchro, or right-click a file in Explorer
    → **Open with → Synchro**. If translation still needs setup, the selected file is kept on the **Translation** tab;
    finish the settings and click **Continue to video**.
-2. The mpv window opens paused and shows *Synchro: Translating ahead…*. Playback starts by itself once the first
+2. Video appears inside Synchro and waits for the first translated phrases. Playback starts by itself once the first
    ten seconds are translated (a few seconds after the models are loaded).
 3. Synchro keeps about half a minute of translation ahead of the picture. If translation falls behind (a slow
    provider, a long burst of speech), the video pauses briefly and continues automatically.
 
-mpv's controls work as usual (Synchro manages the volume mix itself; use the sliders in its window):
+The timeline, translated subtitles, original audio and voiceover volumes share the video window.
+The picture preserves its aspect ratio and is displayed at up to 1920 × 1080 and 30 fps.
+In full screen, move the pointer to reveal the controls.
 
 | Key / action | Effect |
 | --- | --- |
-| Space, click | Pause / play |
-| ← → | Seek 5 s; ↑ ↓ seek 1 min |
-| Drag the seek bar | Seek; translation restarts from the new position |
-| F, double-click | Full screen |
-| Q | Close the video |
+| Space or Play / Pause | Pause or resume |
+| ← / → | Seek back or forward five seconds |
+| Drag the timeline | Preview the target time and seek on release |
+| F or double-click the picture | Toggle full screen |
+| Esc | Exit full screen |
+| Q or Close video | End playback |
 
-**Stop video** in the Synchro window ends the current video. The filename and any playback error remain visible
-afterwards. Closing the Synchro window closes the video and the engine.
+Use **Voices & translation** to change voices, the translation provider or the interface language.
+Select **Watch** to return to the video.
 
 ## What leaves your computer
 
@@ -239,7 +242,9 @@ models and the *Open with* entries. Your settings and logs stay in `%APPDATA%\Sy
 
 ```mermaid
 flowchart LR
-    File[Video file] --> MPV[mpv: picture and original sound]
+    File[Video file] --> MPV[mpv: media clock and original sound]
+    File --> Frames[FFmpeg: video frames]
+    Frames --> Player
     File --> FFmpeg[FFmpeg: 16 kHz audio windows]
     FFmpeg --> ASR[GigaAM / SenseVoice]
     ASR --> Provider[Translation provider]
@@ -250,8 +255,8 @@ flowchart LR
     Player --> Speakers[Voice output]
 ```
 
-- `Synchro.exe` (Rust, this folder) is the window and the player. It starts the engine and mpv as helper processes
-  in a Windows job object, so both end with Synchro even after a crash.
+- `Synchro.exe` (Rust, this folder) is the window and the player. It supervises the engine, picture decoder and audio player
+  in a Windows job object, so they end with Synchro even after a crash.
 - The engine is the [Synchro server](../server) in its desktop host mode, running in a private Python 3.12. It
   reads the file with FFmpeg in windows of 10 s, then 20 s (one second overlap), and returns phrases with their
   timing and WAV speech.

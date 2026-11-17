@@ -10,11 +10,12 @@ Open `Synchro-0.1.0-macos-arm64.dmg`, drag **Synchro** to **Applications**, then
 The test build is ad-hoc signed, without an Apple Developer ID or notarization; downloaded copies may be blocked
 by Gatekeeper. Public distribution needs Developer ID signing and notarization.
 
-Choose a provider and key in **Translation**, or enter a local OpenAI-compatible server address. Use
+Open **Voices & translation** and choose a provider and key in **Translation**, or enter a local OpenAI-compatible server address. Use
 **Open video**, **⌘O**, or drag a video onto the Synchro window. Finder's **Open With** is not registered by this
-initial Mac build. The video opens in a separate mpv window; Space pauses, arrow keys seek, F toggles full screen.
+initial Mac build. Video plays inside Synchro. Space pauses, the arrow keys seek five seconds, and F toggles full screen.
+Move the pointer in full screen to reveal the timeline, subtitles switch and both volume controls.
 
-Choose **Language → Русский** in the app footer for Russian. Switching is immediate and saved automatically;
+Choose **Language → Русский** in the settings footer for Russian. Switching is immediate and saved automatically;
 the interface language is separate from the spoken language of your video.
 
 Original volume, optional ducking, speaker grammar, assigned male/female voices, model catalogs and account
@@ -63,7 +64,7 @@ cat "$HOME/Library/Application Support/Synchro/self-test.txt"
 The report translates two windows; it does not test audio hardware or mpv. See `licenses/macos-tools.txt` and
 `THIRD_PARTY_NOTICES.md` inside the app resources for bundled program sources and licenses.
 
-The native mpv integration test is opt-in (it opens a real player):
+The native mpv integration test is opt-in (it starts the audio player without a video window):
 
 ```sh
 SYNCHRO_TEST_MPV="/path/to/mpv" SYNCHRO_TEST_VIDEO="/path/to/video.mp4" \

@@ -48,6 +48,14 @@ impl Language {
 }
 
 const RUSSIAN: &[(&str, &str)] = &[
+    ("Voices", "Голоса"),
+    ("Seek", "Перемотка"),
+    ("Play", "Смотреть"),
+    ("Pause", "Пауза"),
+    ("Subtitles", "Субтитры"),
+    ("Voices & translation", "Голоса и перевод"),
+    ("Exit full screen", "Выйти из полного экрана"),
+    ("Could not decode the video picture", "Не удалось декодировать изображение видео"),
     ("Custom endpoint", "Свой сервер"),
     ("Service unreachable or timed out", "Сервис недоступен или не ответил вовремя"),
     ("Retry translation. Reference:", "Повторите перевод. Код обращения:"),
@@ -110,7 +118,7 @@ const RUSSIAN: &[(&str, &str)] = &[
     ("F / double-click", "F / двойной клик"),
     ("Full screen", "Полный экран"),
     ("Close video", "Закрыть видео"),
-    ("Use these shortcuts in the video window.", "Эти клавиши работают в окне видео."),
+    ("Use these shortcuts during playback.", "Эти клавиши работают во время просмотра."),
     ("Voiceover", "Озвучка"),
     ("Video language", "Язык видео"),
     ("Voice mode", "Режим голосов"),
@@ -259,7 +267,7 @@ mod tests {
             assert!(!russian.is_empty());
             assert_eq!(Language::English.text(english), english);
         }
-        for source in [include_str!("ui.rs"), include_str!("main.rs")] {
+        for source in [include_str!("ui.rs"), include_str!("main.rs"), include_str!("theater.rs")] {
             for tail in source.split("l.text(\"").skip(1) {
                 let key = tail.split('"').next().unwrap();
                 assert!(seen.contains(key), "Missing Russian UI key: {key}");

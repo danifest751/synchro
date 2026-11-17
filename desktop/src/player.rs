@@ -33,7 +33,12 @@ pub struct Cue {
 #[derive(Default)]
 pub struct Shared {
     pub generation: u64,
+    pub seek_epoch: u64,
+    pub wanted: bool,
+    pub seek: Option<f64>,
+    pub eof: bool,
     pub position: f64,
+    pub moving_since: Option<(Instant, f64)>,
     pub duration: f64,
     pub cues: Vec<Cue>,
     pub ready: f64,
@@ -107,17 +112,19 @@ impl Journal {
 
 pub struct Player {
     shared: Arc<Mutex<Shared>>,
+    pub picture: crate::picture::Picture,
     threads: Vec<JoinHandle<()>>,
     scheduler_done: mpsc::Receiver<()>,
     video_id: u64,
 }
 
 impl Player {
-    pub fn start(api: Api, mpv: PathBuf, file: PathBuf, settings: Arc<Mutex<Settings>>) -> Player {
+    pub fn start(api: Api, mpv: PathBuf, ffmpeg: PathBuf, file: PathBuf, settings: Arc<Mutex<Settings>>) -> Player {
         let api = api.for_video();
         let video_id = api.video_id();
         let shared = Arc::new(Mutex::new(Shared {
             generation: 1,
+            wanted: true,
             status: "Preparing translation…".into(),
             ..Default::default()
         }));
@@ -132,16 +139,38 @@ impl Player {
             );
             std::thread::spawn(move || fetch(api, file, settings, shared, journal))
         };
+        let (picture, decoder) = crate::picture::Picture::start(ffmpeg, file.clone(), shared.clone());
         let scheduler = {
             let (shared, journal) = (shared.clone(), journal.clone());
             std::thread::spawn(move || schedule(mpv, file, settings, shared, journal, done_tx))
         };
         Player {
             shared,
-            threads: vec![fetcher, scheduler],
+            picture,
+            threads: vec![fetcher, scheduler, decoder],
             scheduler_done: done_rx,
             video_id,
         }
+    }
+
+    pub fn view(&self) -> (f64, f64, bool, u64, Option<String>) {
+        let s = self.shared.lock().unwrap();
+        (s.seek.unwrap_or(s.position), s.duration, s.wanted, s.seek_epoch, cue_at(&s.cues, s.position).map(|c| c.text.clone()))
+    }
+
+    pub fn seek(&self, to: f64) {
+        let mut s = self.shared.lock().unwrap();
+        if s.duration > 0.0 {
+            s.seek = Some(to.clamp(0.0, (s.duration - 0.15).max(0.0)));
+        }
+    }
+
+    pub fn toggle(&self) {
+        let mut s = self.shared.lock().unwrap();
+        if s.eof && !s.wanted {
+            s.seek = Some(0.0);
+        }
+        s.wanted = !s.wanted;
     }
 
     pub fn video_id(&self) -> u64 {
@@ -164,6 +193,7 @@ impl Player {
 
     pub fn stop(&self) {
         self.shared.lock().unwrap().stop = true;
+        self.picture.cancel();
     }
 
     /// Wait (bounded) for the scheduler to close mpv, so a new video does not open a second player.
@@ -176,6 +206,7 @@ impl Drop for Player {
     fn drop(&mut self) {
         // Even on an abrupt exit the worker threads must wind down and release mpv.
         self.shared.lock().unwrap().stop = true;
+        self.picture.cancel();
     }
 }
 
@@ -183,6 +214,7 @@ fn restart(shared: &mut Shared, position: Option<f64>) {
     let position = position.unwrap_or(shared.position);
     shared.generation += 1;
     shared.position = position;
+    shared.moving_since = None;
     shared.cues.clear();
     shared.ready = position;
     shared.finished = false;
@@ -255,7 +287,8 @@ fn fetch(api: Api, file: String, settings: Arc<Mutex<Settings>>, shared: Arc<Mut
                 }
                 Err(error) => {
                     failed = true;
-                    shared.lock().unwrap().error = Some(error.message);
+                    let mut s = shared.lock().unwrap();
+                    if !s.stop && s.generation == generation { s.error = Some(error.message); }
                 }
             }
             continue;
@@ -359,10 +392,11 @@ fn schedule(
         journal.log("no audio output device; voice disabled".into());
     }
     let mut voice: Option<Voice> = None;
-    let (mut wanted, mut held, mut preparing, mut speed) = (true, true, true, 1.0);
-    let (mut last, mut generation, mut caption) = (None::<(f64, Instant)>, 0u64, None::<u64>);
-    let (mut volume, mut duck_until, mut last_mix, mut notice) =
-        (-1.0f64, Instant::now(), Instant::now(), Instant::now());
+    let (mut held, mut preparing, mut speed) = (true, true, 1.0);
+    let mut generation = 0;
+    let mut previous_eof = false;
+    let (mut volume, mut duck_until, mut last_mix) =
+        (-1.0f64, Instant::now(), Instant::now());
     let mut last_original = None;
     let stop_voice = |voice: &mut Option<Voice>| {
         if let Some(v) = voice.take() {
@@ -370,6 +404,24 @@ fn schedule(
         }
     };
     while mpv.alive() && !shared.lock().unwrap().stop {
+        let target = shared.lock().unwrap().seek.take();
+        if let Some(target) = target {
+            stop_voice(&mut voice);
+            mpv.set("pause", json!(true));
+            held = true;
+            if speed != 1.0 {
+                mpv.set("speed", json!(1.0));
+                speed = 1.0;
+            }
+            if let Err(error) = mpv.request(json!(["seek", target, "absolute+exact"])) {
+                shared.lock().unwrap().error = Some(error);
+            } else {
+                let mut s = shared.lock().unwrap();
+                restart(&mut s, Some(target));
+                s.seek_epoch += 1;
+            }
+            previous_eof = false;
+        }
         let Some(time) = mpv.number("time-pos") else {
             std::thread::sleep(Duration::from_millis(50));
             continue;
@@ -384,42 +436,31 @@ fn schedule(
         let mut pause_set = None;
         let mut speed_set = None;
         let mut stop_voice_now = false;
-        let mut caption_show = None;
-        let mut notice_show = None;
-        let (running, active_cue, rate) = {
+        if seeking {
+            stop_voice(&mut voice);
+            std::thread::sleep(Duration::from_millis(10));
+            continue;
+        }
+        let (running, active_cue, rate, time) = {
             let mut s = shared.lock().unwrap();
-            // A user seek (or a restart from settings) translates again from the new position.
-            let jumped = last.is_some_and(|(at, when)| {
-                let expected = if paused {
-                    at
-                } else {
-                    at + when.elapsed().as_secs_f64() * speed
-                };
-                seeking || (time - expected).abs() > 1.5
-            });
-            if jumped {
-                journal.log(format!("seek to {time:.1}"));
-                restart(&mut s, Some(time));
-            }
             if s.generation != generation {
                 generation = s.generation;
                 preparing = true;
                 stop_voice_now = true;
             }
-            last = Some((time, now));
+            // Audio backends briefly report an earlier timestamp when their speed changes.
+            // Explicit seeks have already reset position and are the only backwards clock step.
+            let time = time.max(s.position);
             s.position = time;
-            // mpv's own pause button: playback the user stopped stays stopped; a press while we hold resumes intent.
-            if paused && !held && wanted {
-                journal.log(if eof {
-                    format!("end of video at {time:.1}")
-                } else {
-                    format!("paused by the viewer at {time:.1}")
-                });
-                wanted = false;
+            s.eof = eof;
+            if eof && !previous_eof {
+                s.wanted = false;
             }
-            if !paused && held {
-                held = false;
-                wanted = true;
+            previous_eof = eof;
+            let wanted = s.wanted;
+            if !wanted {
+                held = true;
+                if !paused { pause_set = Some(true); }
             }
             let (ready, finished, duration) = (s.ready, s.finished, s.duration.max(time + 0.2));
             if preparing && prepared(ready, time, duration, finished) {
@@ -445,7 +486,7 @@ fn schedule(
             }
             let cue = cue_at(&s.cues, time);
             let rate = video_rate(cue);
-            if (rate - speed).abs() > 1e-4 {
+            if !paused && (rate - speed).abs() > 1e-4 {
                 journal.log(format!("video speed {rate:.2} at {time:.1}"));
                 speed_set = Some(rate);
                 speed = rate;
@@ -453,14 +494,7 @@ fn schedule(
             }
             let running = wanted && !paused && !seeking && !preparing;
             let active_cue = cue.cloned();
-            if config.captions && running
-                && let Some(cue) = cue.filter(|cue| caption != Some(cue.id))
-            {
-                let remaining =
-                    ((cue.start + cue.source_duration - time) / rate * 1000.0).max(300.0) as u64;
-                caption_show = Some((cue.text.clone(), remaining));
-                caption = Some(cue.id);
-            }
+            s.moving_since = (running && pause_set != Some(true)).then_some((now, rate));
             s.status = if let Some(error) = &s.error {
                 format!("Error: {error}")
             } else if preparing || held && wanted {
@@ -472,16 +506,8 @@ fn schedule(
                     (ready % 60.0) as u64
                 )
             };
-            if (preparing || held && wanted || s.error.is_some())
-                && notice.elapsed() > Duration::from_millis(900)
-            {
-                notice_show = Some((format!("Synchro: {}", config.interface_language.message(&s.status)), 1000));
-                notice = now;
-            } else {
-                s.cues
-                    .retain(|cue| cue.start + cue.source_duration >= time - 30.0);
-            }
-            (running, active_cue, rate)
+            s.cues.retain(|cue| cue.start + cue.source_duration >= time - 30.0);
+            (running, active_cue, rate, time)
         };
         // Apply player effects without holding the shared lock.
         if stop_voice_now {
@@ -559,12 +585,6 @@ fn schedule(
             mpv.set("volume", json!(mpv_volume(mixed)));
             volume = mixed;
         }
-        if let Some((text, ms)) = caption_show {
-            mpv.show(&text, ms);
-        }
-        if let Some((text, ms)) = notice_show {
-            mpv.show(&text, ms);
-        }
         std::thread::sleep(Duration::from_millis(20));
     }
     stop_voice(&mut voice);
@@ -577,6 +597,50 @@ fn schedule(
 mod tests {
     use super::*;
     use crate::api::{Segment, Window};
+
+    #[test]
+    #[ignore = "requires SYNCHRO_TEST_MPV and SYNCHRO_TEST_VIDEO"]
+    fn pause_seek_and_resume_follow_viewer_intent_while_buffering() {
+        let binary = std::env::var_os("SYNCHRO_TEST_MPV").unwrap().into();
+        let file = std::env::var_os("SYNCHRO_TEST_VIDEO").unwrap().into();
+        let shared = Arc::new(Mutex::new(Shared {
+            generation: 1, duration: 10.0, wanted: true, ..Default::default()
+        }));
+        let logs = tempfile::tempdir().unwrap();
+        let journal = Journal::at(logs.path().join("player.log"));
+        let (tx, rx) = mpsc::channel();
+        let clock = shared.clone();
+        let worker = std::thread::spawn(move || {
+            schedule(binary, file, Default::default(), clock, journal, tx);
+        });
+        let player = Player { shared: shared.clone(), picture: Default::default(),
+            threads: vec![worker], scheduler_done: rx, video_id: 1 };
+        let wait = |condition: &dyn Fn(&Shared) -> bool| {
+            let until = Instant::now() + Duration::from_secs(8);
+            loop {
+                if condition(&shared.lock().unwrap()) { break; }
+                assert!(Instant::now() < until, "playback transition timed out");
+                std::thread::sleep(Duration::from_millis(15));
+            }
+        };
+        player.toggle(); // Pause before translation arrives.
+        player.seek(3.0);
+        wait(&|s| s.seek_epoch == 1 && (s.position - 3.0).abs() < 0.2);
+        {
+            let mut s = shared.lock().unwrap();
+            s.finished = true;
+            s.ready = s.duration;
+        }
+        std::thread::sleep(Duration::from_millis(220));
+        assert!((player.view().0 - 3.0).abs() < 0.2);
+        player.toggle();
+        wait(&|s| s.position > 3.35);
+        player.seek(0.5);
+        wait(&|s| s.seek_epoch == 2 && s.position < 1.0 && s.wanted);
+        player.stop();
+        player.wait_stopped(Duration::from_secs(5));
+        wait(&|s| s.stop);
+    }
 
     #[test]
     fn original_volume_matches_linear_voice_gain_and_ducking_is_audible() {
@@ -627,7 +691,7 @@ mod tests {
     fn dropping_a_player_signals_the_workers_to_stop() {
         let shared = Arc::new(Mutex::new(Shared::default()));
         let (_tx, rx) = mpsc::channel();
-        let player = Player { shared: shared.clone(), threads: vec![], scheduler_done: rx, video_id: 1 };
+        let player = Player { shared: shared.clone(), picture: Default::default(), threads: vec![], scheduler_done: rx, video_id: 1 };
         assert!(!shared.lock().unwrap().stop);
         drop(player);
         assert!(shared.lock().unwrap().stop);
@@ -637,7 +701,7 @@ mod tests {
     fn wait_stopped_returns_once_the_scheduler_finishes() {
         let shared = Arc::new(Mutex::new(Shared::default()));
         let (tx, rx) = mpsc::channel();
-        let player = Player { shared, threads: vec![], scheduler_done: rx, video_id: 1 };
+        let player = Player { shared, picture: Default::default(), threads: vec![], scheduler_done: rx, video_id: 1 };
         tx.send(()).unwrap();
         player.wait_stopped(Duration::from_secs(1));
     }

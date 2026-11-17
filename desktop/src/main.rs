@@ -12,6 +12,8 @@ mod process;
 mod provider;
 mod ui;
 mod wav;
+mod picture;
+mod theater;
 
 use config::Settings;
 use eframe::egui;
@@ -45,7 +47,8 @@ struct App {
     edited: Settings,
     engine: Arc<Mutex<EngineState>>,
     _engine_process: Arc<Mutex<Option<engine::Engine>>>,
-    mpv: Option<PathBuf>,
+    media_tools: Option<(PathBuf, PathBuf)>,
+    theater: theater::Theater,
     player: Option<player::Player>,
     pending: Option<PathBuf>,
     check: Arc<Mutex<CheckReport>>,
@@ -67,10 +70,10 @@ impl App {
         let engine = Arc::new(Mutex::new(EngineState::Starting));
         let engine_process: Arc<Mutex<Option<engine::Engine>>> = Default::default();
         let check: Arc<Mutex<CheckReport>> = Default::default();
-        let mut mpv = None;
+        let mut media_tools = None;
         match engine::Layout::find() {
             Ok(layout) => {
-                mpv = Some(layout.mpv.clone());
+                media_tools = Some((layout.mpv.clone(), layout.tools.join(if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" })));
                 let (state, warm, session) = (
                     engine.clone(),
                     check.clone(),
@@ -117,7 +120,8 @@ impl App {
             edited: settings,
             engine,
             _engine_process: engine_process,
-            mpv,
+            media_tools,
+            theater: Default::default(),
             player: None,
             pending: file,
             check,
@@ -146,10 +150,11 @@ impl App {
         self.restart_after = None;
         if self.edited.connection_error().is_some() {
             self.pending = Some(file);
+            self.theater.voices_tab = false;
             self.translation_page = true;
             return;
         }
-        let (Some(api), Some(mpv)) = (self.api(), self.mpv.clone()) else {
+        let (Some(api), Some((mpv, ffmpeg))) = (self.api(), self.media_tools.clone()) else {
             self.pending = Some(file);
             self.translation_page = false;
             return;
@@ -163,7 +168,8 @@ impl App {
         self.playback_status = "Preparing translation…".into();
         self.playback_error = None;
         self.translation_page = false;
-        self.player = Some(player::Player::start(api, mpv, file, self.settings.clone()));
+        self.theater = Default::default();
+        self.player = Some(player::Player::start(api, mpv, ffmpeg, file, self.settings.clone()));
         self.playback_id = self.player.as_ref().map(|player| player.video_id());
     }
 
@@ -240,6 +246,10 @@ impl eframe::App for App {
                     self.playback_status = "Playback finished".into();
                 }
                 self.player = None;
+                self.theater = Default::default();
+                if ui.ctx().input(|i| i.viewport().fullscreen == Some(true)) {
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
+                }
             }
         }
         let dropped = ui
@@ -385,7 +395,8 @@ mod ui_tests {
             edited: Settings::default(),
             engine: Arc::new(Mutex::new(EngineState::Starting)),
             _engine_process: Default::default(),
-            mpv: None,
+            media_tools: None,
+            theater: Default::default(),
             player: None,
             pending: None,
             check: Default::default(),
@@ -441,7 +452,8 @@ mod ui_tests {
                     app.edited.interface_language = language;
                     app.translation_page = page != "watch";
                     if page == "paired" {
-                        app.translation_page = false;
+                        app.translation_page = true;
+                        app.theater.voices_tab = true;
                         app.edited.match_voice = true;
                         app.edited.female_voice = Some("alfia".into());
                         app.edited.male_voice = Some("eduard".into());
@@ -496,7 +508,7 @@ mod ui_tests {
                             continue;
                         }
                         assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,
-                            egui::Shape::Text(text) if text.galley.job.text == language.text("Translation"))));
+                            egui::Shape::Text(text) if text.galley.job.text == language.text(if app.translation_page { "Translation" } else { "Voices & translation" }))));
                         for shape in &output.shapes {
                             if let egui::Shape::Text(text) = &shape.shape {
                                 let bounds = text.visual_bounding_rect();

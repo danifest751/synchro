@@ -51,6 +51,10 @@ impl Process {
         Ok(Self { child, closed: false, #[cfg(unix)] watcher })
     }
 
+    pub fn take_stdout(&mut self) -> Option<std::process::ChildStdout> {
+        self.child.stdout.take()
+    }
+
     fn finish(&mut self) {
         if self.closed { return; }
         #[cfg(unix)]
