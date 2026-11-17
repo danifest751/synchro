@@ -133,7 +133,13 @@ impl Mpv {
         while self.responses.try_recv().is_ok() {}
         let mut line = serde_json::to_vec(&json!({"command": command, "request_id": id})).unwrap();
         line.push(b'\n');
-        self.writer.write_all(&line).map_err(|e| e.to_string())?;
+        self.writer.write_all(&line).map_err(|error| {
+            if error.kind() == std::io::ErrorKind::BrokenPipe {
+                "mpv closed".to_owned()
+            } else {
+                error.to_string()
+            }
+        })?;
         let deadline = Instant::now() + timeout;
         loop {
             let remaining = deadline.saturating_duration_since(Instant::now());
